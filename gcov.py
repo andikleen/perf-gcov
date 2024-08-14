@@ -6,8 +6,6 @@
 # focus binary
 # filter for minimal branches
 
-from __future__ import print_function
-
 import os
 import sys
 import pprint
@@ -28,39 +26,40 @@ GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
 GCOV_TAG_AFDO_FUNCTION = 0xac000000
 GCOV_TAG_AFDO_MODULE_GROUPING = 0xae000000
 GCOV_DATA_MAGIC = 0x67636461 # 'gcda'
-GCOV_VERSION = 0x3430372a # XXX
+GCOV_VERSION = 2
 HIST_TYPE_INDIR_CALL_TOPN = 7
 
 class Stats:
     def __init__(self):
         self.ignored = 0;
         self.total = 0
-        self.branches = Counter()
-        self.filenames = set()
-        self.functions = set()
+        self.branches : Counter(Key) = Counter()
+        self.functions : Set[str] = set()
 
-Key = namedtuple('Key', ['sym', 'filename', 'line', 'disc'])
+Key = namedtuple('Key', ['sym', 'offset'])
 Target = namedtuple('Target', ['src', 'dst', 'count'])
 Callsite = namedtuple('Callsite', ['callersym', 'offset', 'branches', 'count'])
 
 stats = Stats()
 
-def w32(f, v):
+def w32(f: file, v: int):
     f.write(pack("I", v))
 
-def wstring(f, s):
-    w32(f, len(fn)+1)
-    if len:
+def wstring(f: file, s: str):
+    w32(f, len(s)+1)
+    if len > 0:
         f.write(pack("%ds" % len(s), s.encode('utf-8'))) 
 
-def wcounter(f, v):
+def wcounter(f: file, v: int):
     w32(f, (v       ) & 0xffffffff)
     w32(f, (v >> 32 ) & 0xffffffff)
 
-def gen_offset(t):
-    return (t.line << 16) | t.disc
+def gen_offset(line: int, disc: int):
+    return (line << 16) | disc
 
-def wfunc_instance(f, func_ind, branches, call_sites, string_table):
+def wfunc_instance(f: file, func_ind: int, branches: list[Key],
+                   call_sites: list[Callsite],
+                   string_table : dict[str, int]):
     w32(f, func_ind)
     w32(f, len(stats.functions))
     #w32(f, 0) # XXX len(call_sites))
@@ -68,7 +67,7 @@ def wfunc_instance(f, func_ind, branches, call_sites, string_table):
     for func, branches in groupby(sorted(branches, key=lambda x: x.src.sym),
                                   lambda x: x.src.sym):
         targets = list(branches)
-        w32(f, gen_offset(targets[0].src))
+        w32(f, targets[0].src.offset)
         w32(f, len(targets))
         wcounter(f, sum((x[2] for x in targets)))
         for t in targets:
@@ -79,24 +78,23 @@ def wfunc_instance(f, func_ind, branches, call_sites, string_table):
     #    w32(f, c.offset)
     #    wfunc_instance(f, string_index[c.callersym], c.branches, [], string_table)
 
-def gen_strtable(stats):
+def gen_strtable(stats: Stats):
     string_table = sorted(chain(stats.filenames, stats.functions))
     string_index = { name: i for i, name in enumerate(string_table) }
     # uses same algorithm as autofdo, can round up too much
     slen4 = sum((len(s) + 4 / 4 for s in string_table))
     return string_table, string_index, slen4
 
-def gen_tables(stats):
+def gen_tables(stats: Stats) -> tuple[defaultdict(list[Target]), defaultdict(list[Callsite])]:
     func_table = defaultdict([])
     call_sites = defaultdict([])
-    head_count = Counter()
-    for k, v in stats.branches.items(): 
+    for k, count in stats.branches.items(): 
         if k.src.sym != k.dst.sym:
-            call_sites[k.dst.sym].append(Callsite(k.src.sym, gen_offset(k.src), v))
-        func_table[k[0].sym].append(Target(k[0], k[1], v))
+            call_sites[k.dst.sym].append(Callsite(k.src.sym, k.src.offset, count))
+        func_table[k[0].sym].append(Target(k[0], k[1], count))
     return func_table, call_sites
 
-def trace_end():
+def trace_end() -> None:
     print("%d total, %d ignored" % (stats.total, stats.ignored), file=sys.stderr)
     for a, b in stats.branches.most_common(10):
         print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.), file=sys.stderr)
@@ -130,7 +128,7 @@ def trace_end():
         w32(0)
         # working set is not used
 
-def process_event(param_dict):
+def process_event(param_dict) -> None:
     for br, bsym in zip(param_dict["brstack"], param_dict["brstacksym"]):
         #pprint.pp(br)
         stats.total += 1
@@ -148,7 +146,7 @@ def process_event(param_dict):
                 sym = s.split("+")[0]
                 stats.functions.add(sym)
             stats.filenames.add(res[0])
-            return Key(sym, res[0], res[1], res[2])
+            return Key(sym, gen_offset(res[1], res[2]))
 
         key = resolve(res[0], bsym["from"]), resolve(res[1], bsym["to"])
         if key[0].sym is None or key[1].sym is None:
