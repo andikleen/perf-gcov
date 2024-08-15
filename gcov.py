@@ -1,10 +1,10 @@
-# generate gcc gcov autofdo files from perf record -b 
+# generate gcc gcov autofdo files from perf record -b
 # gcc -O2 -o workload ...
 # perf record -b workload
 # perf script gcov.py > file.gcov
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
-# open: 
+# open:
 # threshold
 # head count
 # callers inline stack (need perf change)
@@ -65,17 +65,14 @@ def w32(f: BinaryIO, v: int):
 def wstring(f: BinaryIO, s: str):
     w32(f, len(s)+1)
     if len(s) > 0:
-        f.write(pack("%ds" % len(s), s.encode('utf-8'))) 
+        f.write(pack("%ds" % len(s), s.encode('utf-8')))
 
 def wcounter(f: BinaryIO, v: int):
     w32(f, (v       ) & 0xffffffff)
     w32(f, (v >> 32 ) & 0xffffffff)
 
-def gen_offset(fid: int, sym:str, line: int, disc: int) -> int:
-    sl = get_symline(fid, sym)
-    # XXX need inline 
-    # XXX handle line in different file or beyond it?
-    return ((sl - line) << 16) | disc
+def gen_offset(line: int, disc: int) -> int:
+    return (line << 16) | disc
 
 def wfunc_instance(f: BinaryIO,
                    func_ind: int,
@@ -84,7 +81,8 @@ def wfunc_instance(f: BinaryIO,
                    string_table : dict[str, int]) -> None:
     w32(f, func_ind)
     w32(f, len(all_branches))
-    w32(f, len(all_call_sites))
+    #w32(f, len(all_call_sites))
+    w32(f, 0)
 
     for src, branchit in groupby(sorted(all_branches, key=lambda x: x.src)):
         branches = list(branchit)
@@ -95,11 +93,12 @@ def wfunc_instance(f: BinaryIO,
             w32(f, HIST_TYPE_INDIR_CALL_TOPN)
             wcounter(f, b.dst.offset)
             wcounter(f, b.count)
-    for c in call_sites:
-        w32(f, c.offset)
-        wfunc_instance(f, string_index[c.callersym], c.branches, [], string_table)
+	# for inlines
+    #for c in call_sites:
+    #    w32(f, c.offset)
+    #    wfunc_instance(f, string_index[c.callersym], c.branches, [], string_table)
 
-def gen_strtable(stats: Stats) -> tuple[list[str], dict[str, int]]:
+def gen_strtable(stats: Stats):
     string_table = sorted(stats.functions)
     string_index = { name: i for i, name in enumerate(string_table) }
     slen4 = sum((len(s) + 4 / 4 for s in string_table))
@@ -109,9 +108,12 @@ def gen_tables(stats: Stats) -> tuple[defaultdict[str, list[Branch]], defaultdic
     func_table: defaultdict[str, list[Branch]] = defaultdict(list)
     call_sites: defaultdict[str, list[Callsite]] = defaultdict(list)
     # XXX handle non unique symbols. file match?
-    for k, count in stats.branches.items(): 
-        if k.src.sym != k.dst.sym:
-            call_sites[k.dst.sym].append(Callsite(k.src.sym, k.src.offset, ..., count))
+    for k, count in stats.branches.items():
+        # TBD
+        #if k.src.sym != k.dst.sym:
+        #    call_sites[k.dst.sym].append(Callsite(k.src.sym, k.src.offset, ..., count))
+        if k.src.sym != k.dst.sym: # for now
+            continue
         func_table[k.src.sym].append(Branch(k.src, k.dst, count))
     return func_table, call_sites
 
@@ -119,7 +121,7 @@ def trace_end():
     print("%d total, %d ignored" % (stats.total, stats.ignored), file=sys.stderr)
     for a, b in stats.branches.most_common(10):
         print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.), file=sys.stderr)
-    
+
     string_table, string_index, slen4 = gen_strtable(stats)
     func_table, call_sites = gen_tables(stats)
 
@@ -181,7 +183,8 @@ def process_event(param_dict):
                 if symres:
                     if symres[0] == res[0]:
                         fid = get_fid(res[0])
-                        return Location(sym, fid, gen_offset(sym, res[1] - symres[1], res[2]))
+			# XXX handle inline
+                        return Location(sym, fid, gen_offset(res[1] - symres[1], res[2]))
                     # XXX check inline stack
             return Location("", 0, 0)
         key = Key(resolve(res[0], bsym["from"]), resolve(res[1], bsym["to"]))
