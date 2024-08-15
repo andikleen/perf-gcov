@@ -1,0 +1,29 @@
+start:
+	visittopsymbol
+	traverse
+
+visit:
+	#poscount
+	#callsites
+	for each poscount
+		offset
+		#targetmap
+		count
+		for each targetmap
+			HIST...TOPN
+			symbol
+			count
+
+visittopsymbol:
+	count
+	symbol
+
+visitcallsite:
+	offset
+	symbol
+
+traverse:
+	visit
+	for each callsite_symbol:
+		visitcallsite
+		traverse callers
