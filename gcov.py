@@ -48,7 +48,7 @@ Branch = NamedTuple('Branch', [('src', Location), ('dst', Location),
                                 ('count', int)])
 
 class Stats:
-    def __init__(self: Stats):
+    def __init__(self):
         self.ignored = 0;
         self.total = 0
         self.branches : Counter[Key] = Counter()
@@ -177,9 +177,9 @@ def process_event(param_dict):
 
         def resolve(res:tuple[str, int, int], s) -> Location:
             if "+" in s:
-                sym, ipoff = s.split("+")[0]
+                sym, ipoff = s.split("+")
                 stats.functions.add(sym)
-                symres = perf_resolve_ip(res[1] - int(ipoff, 16))
+                symres = perf_resolve_ip(perf_script_context, res[1] - int(ipoff, 16))
                 if symres:
                     if symres[0] == res[0]:
                         fid = get_fid(res[0])
