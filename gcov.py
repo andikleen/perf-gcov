@@ -1,16 +1,20 @@
-# generate gcc gcov autofdo BinaryIOs from perf record -b 
+# generate gcc gcov autofdo files from perf record -b 
 # gcc -O2 -o workload ...
 # perf record -b workload
 # perf script gcov.py > file.gcov
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
 # open: 
+# threshold
+# head count
+# callers inline stack (need perf change)
+# offset relative to function
 # call sites
 # focus binary
-# filter for minimal branches
 # call sites
 # handle non unique symbols
 # output multiple gcovs based on buildid
+# unit tests
 
 import os
 import sys
@@ -23,8 +27,7 @@ from typing import BinaryIO, NamedTuple
 sys.path.append(os.environ['PERF_EXEC_PATH'] + \
 	'/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
-from perf_trace_context import perf_script_context, perf_brstack_srcline
-#from Core import *
+from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip
 
 def trace_begin():
     pass
@@ -37,11 +40,11 @@ GCOV_DATA_MAGIC = 0x67636461 # 'gcda'
 GCOV_VERSION = 2
 HIST_TYPE_INDIR_CALL_TOPN = 7
 
-Location = NamedTuple('Location', [('sym', str), ('offset', int)])
+Location = NamedTuple('Location', [('sym', str), ('fileid', int), ('offset', int)])
 Key = NamedTuple('Key', [('src', Location), ('dst', Location)])
 Callsite = NamedTuple('Callsite', [('callersym', str), ('offset', int),
 				   ('callers', list[Location]), ('count', int)])
-Target = NamedTuple('Target', [('src', Location), ('dst', Location),
+Branch = NamedTuple('Branch', [('src', Location), ('dst', Location),
                                 ('count', int)])
 
 class Stats:
@@ -50,6 +53,9 @@ class Stats:
         self.total = 0
         self.branches : Counter[Key] = Counter()
         self.functions : set[str] = set()
+        self.filenames : dict[str,int] = dict()
+        self.symlines : dict[tuple[str,int], int] = dict()
+        self.next_fid = 0
 
 stats = Stats()
 
@@ -65,49 +71,51 @@ def wcounter(f: BinaryIO, v: int):
     w32(f, (v       ) & 0xffffffff)
     w32(f, (v >> 32 ) & 0xffffffff)
 
-def gen_offset(line: int, disc: int):
-    return (line << 16) | disc
+def gen_offset(fid: int, sym:str, line: int, disc: int) -> int:
+    sl = get_symline(fid, sym)
+    # XXX need inline 
+    # XXX handle line in different file or beyond it?
+    return ((sl - line) << 16) | disc
 
 def wfunc_instance(f: BinaryIO,
                    func_ind: int,
-                   all_branches: list[Target],
-                   call_sites: list[Callsite],
-                   string_table : dict[str, int]):
+                   all_branches: list[Branch],
+                   all_call_sites: list[Callsite],
+                   string_table : dict[str, int]) -> None:
     w32(f, func_ind)
-    w32(f, len(stats.functions))
-    #w32(f, 0) # XXX len(call_sites))
-    # XXX how to handle non unique symbols?
-    for func, branches in groupby(sorted(all_branches, key=lambda x: x.src.sym),
-                                  lambda x: x.src.sym):
-        targets = list(branches)
-        w32(f, targets[0].src.offset)
-        w32(f, len(targets))
-        wcounter(f, sum((x[2] for x in targets)))
-        for t in targets:
-            w32(f, HIST_TYPE_INDIR_CALL_TOPN)
-            wcounter(f, string_table[t.dst.sym])
-            wcounter(f, t.count)
-    #for c in call_sites:
-    #    w32(f, c.offset)
-    #    wfunc_instance(f, string_index[c.callersym], c.branches, [], string_table)
+    w32(f, len(all_branches))
+    w32(f, len(all_call_sites))
 
-def gen_strtable(stats: Stats):
+    for src, branchit in groupby(sorted(all_branches, key=lambda x: x.src)):
+        branches = list(branchit)
+        w32(f, branches[0].src.offset)
+        w32(f, len(branches))
+        wcounter(f, sum((b.count for b in branches)))
+        for b in branches:
+            w32(f, HIST_TYPE_INDIR_CALL_TOPN)
+            wcounter(f, b.dst.offset)
+            wcounter(f, b.count)
+    for c in call_sites:
+        w32(f, c.offset)
+        wfunc_instance(f, string_index[c.callersym], c.branches, [], string_table)
+
+def gen_strtable(stats: Stats) -> tuple[list[str], dict[str, int]]:
     string_table = sorted(stats.functions)
     string_index = { name: i for i, name in enumerate(string_table) }
-    # uses same algorithm as autofdo, can round up too much
     slen4 = sum((len(s) + 4 / 4 for s in string_table))
     return string_table, string_index, slen4
 
-def gen_tables(stats: Stats) -> tuple[defaultdict[str, list[Target]], defaultdict[str, list[Callsite]]]:
-    func_table: defaultdict[str, list[Target]] = defaultdict(list)
+def gen_tables(stats: Stats) -> tuple[defaultdict[str, list[Branch]], defaultdict[str, list[Callsite]]]:
+    func_table: defaultdict[str, list[Branch]] = defaultdict(list)
     call_sites: defaultdict[str, list[Callsite]] = defaultdict(list)
+    # XXX handle non unique symbols. file match?
     for k, count in stats.branches.items(): 
         if k.src.sym != k.dst.sym:
             call_sites[k.dst.sym].append(Callsite(k.src.sym, k.src.offset, ..., count))
-        func_table[k.src.sym].append(Target(k.src, k.dst, count))
+        func_table[k.src.sym].append(Branch(k.src, k.dst, count))
     return func_table, call_sites
 
-def trace_end() -> None:
+def trace_end():
     print("%d total, %d ignored" % (stats.total, stats.ignored), file=sys.stderr)
     for a, b in stats.branches.most_common(10):
         print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.), file=sys.stderr)
@@ -115,25 +123,28 @@ def trace_end() -> None:
     string_table, string_index, slen4 = gen_strtable(stats)
     func_table, call_sites = gen_tables(stats)
 
-    with open("BinaryIO.gcov", "wb") as f:
+    with open("file.gcov", "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
         w32(f, GCOV_VERSION)
         w32(f, 0)
 
-        # write string table with BinaryIO names and symbols
+        # write string table
         w32(f, GCOV_TAG_AFDO_FILE_NAMES)
         w32(f, slen4)
         w32(f, len(string_table))
         for fn in string_table:
             wstring(f, fn)
 
-        # write function proBinaryIO
+        # write function profile
         w32(f, GCOV_TAG_AFDO_FUNCTION)
         w32(f, 0) # length. ignored by gcc. XXX fill in
         w32(f, len(stats.functions))
         for func in stats.functions:
-            wfunc_instance(f, string_index[func], func_table[func], call_sites[func],
-                           sum((x.count for x in call_sites[func]))) # XXX include branches inside function?
+            wfunc_instance(f,
+                           string_index[func],
+                           func_table[func],
+                           call_sites[func],
+                           sum((x.count for x in call_sites[func])))  # XXX
 
         # not used by gcc
         w32(f, GCOV_TAG_MODULE_GROUPING)
@@ -141,7 +152,16 @@ def trace_end() -> None:
         w32(f, 0)
         # working set is not used
 
-def process_event(param_dict) -> None:
+def get_fid(fn:str) -> int:
+    if fn in stats.filenames:
+        fid = stats.filenames[fn]
+    else:
+        fid = stats.next_fid
+        stats.next_fid += 1
+        stats.filenames[fn] = fid
+    return fid
+
+def process_event(param_dict):
     for br, bsym in zip(param_dict["brstack"], param_dict["brstacksym"]):
         #pprint.pp(br)
         stats.total += 1
@@ -154,12 +174,16 @@ def process_event(param_dict) -> None:
             continue
 
         def resolve(res:tuple[str, int, int], s) -> Location:
-            sym = ""
             if "+" in s:
-                sym = s.split("+")[0]
+                sym, ipoff = s.split("+")[0]
                 stats.functions.add(sym)
-            return Location(sym, gen_offset(res[1], res[2]))
-
+                symres = perf_resolve_ip(res[1] - int(ipoff, 16))
+                if symres:
+                    if symres[0] == res[0]:
+                        fid = get_fid(res[0])
+                        return Location(sym, fid, gen_offset(sym, res[1] - symres[1], res[2]))
+                    # XXX check inline stack
+            return Location("", 0, 0)
         key = Key(resolve(res[0], bsym["from"]), resolve(res[1], bsym["to"]))
         if key.src.sym is None or key.dst.sym is None:
             stats.ignored += 1
