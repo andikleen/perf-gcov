@@ -91,7 +91,6 @@ def wfunc_instance(f: BinaryIO,
         # XXX how does this handle switch/computed goto?
         w32(f, branches[0].src.offset)
         num_calls = sum((1 if b.src.sym != b.dst.sym else 0 for b in branches))
-        num_calls = 0
         w32(f, num_calls)
         count = sum((b.count for b in branches))
         wcounter(f, count)
