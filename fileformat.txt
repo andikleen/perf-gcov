@@ -12,7 +12,7 @@ visit:
 		for each targetmap
 			HIST...TOPN
 			symbol
-			count
+			idx as count
 
 visittopsymbol:
 	count
@@ -27,3 +27,31 @@ traverse:
 	for each callsite_symbol:
 		visitcallsite
 		traverse callers
+
+
+// gcc
+
+read_function_instance:
+	name
+	#pos_counts
+	#callsites
+	for each pos_count:
+		offset
+		#targets
+		count
+		for each target:
+			type (ignored)
+			offset as count
+			count
+	for each callsite:
+		offset
+		read_function_instance
+
+
+function:
+	AFDO_TAG_FUNCTION
+	length (ignored)
+	#functions
+	for each function:
+		read_function_instance
+			
