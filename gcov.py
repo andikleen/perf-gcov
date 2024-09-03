@@ -19,6 +19,7 @@ import pprint
 from collections import Counter, defaultdict, namedtuple
 from itertools import groupby
 from struct import pack
+import struct
 from typing import BinaryIO, NamedTuple
 import argparse
 
@@ -65,7 +66,10 @@ class Stats:
 stats = Stats()
 
 def w32(f: BinaryIO, v: int):
-    f.write(pack("I", v))
+    try:
+        f.write(pack("I", v))
+    except struct.error:
+        sys.exit("bad value for w32 %x" % v)
 
 def wstring(f: BinaryIO, s: str):
     s += "\0"
@@ -77,6 +81,7 @@ def wcounter(f: BinaryIO, v: int):
     w32(f, (v >> 32 ) & 0xffffffff)
 
 def gen_offset(line: int, disc: int) -> int:
+    assert line >= 0, "line %d" % line
     return (line << 16) | disc
 
 def wfunc_instance(f: BinaryIO,
@@ -88,19 +93,23 @@ def wfunc_instance(f: BinaryIO,
     w32(f, string_index[func])
     num = 0
     for src, branchit in groupby(sbranches, lambda x: x.src):
+        if sum((b.count for b in branchit)) < args.threshold:
+            continue
         num += 1
     w32(f, num)
     w32(f, 0) # call sites XXX
 
     for src, branchit in groupby(sbranches, lambda x: x.src):
         branches = list(branchit)
+        count = sum((b.count for b in branches))
+        if count < args.threshold:
+            continue
         # file contains only source offset
         # target is implicitly known by the compiler
         # XXX how does this handle switch/computed goto?
         w32(f, branches[0].src.offset)
-        num_calls = sum((1 if b.src.sym != b.dst.sym else 0 for b in branches))
+        num_calls = sum((1 if b.src.sym != b.dst.sym and b.count >= args.threshold else 0 for b in branches))
         w32(f, num_calls)
-        count = sum((b.count for b in branches))
         wcounter(f, count)
 
         if args.verbose:
@@ -112,6 +121,8 @@ def wfunc_instance(f: BinaryIO,
                 # otherwise cannot distinguish from an ordinary branch
                 # however this wouldn't work for recursive tail calls?
                 if b.dst.sym == b.src.sym:
+                    continue
+                if b.count < args.threshold:
                     continue
                 w32(f, HIST_TYPE_INDIR_CALL_TOPN)
                 wcounter(f, string_index[b.dst.sym])
@@ -199,9 +210,13 @@ def process_event(param_dict):
                     if symres[0] == res[0]:
                         fid = get_fid(res[0])
 			# XXX handle inline
+                        if res[1] < symres[1]:
+                            if args.verbose:
+                                print("symbol %s %s sample %s has negative line offset" % (sym, symres, res))
+                            return Location(None, 0, 0)
                         return Location(sym, fid, gen_offset(res[1] - symres[1], res[2]))
                     # XXX check inline stack
-            return Location("", 0, 0)
+            return Location(None, 0, 0)
         key = Key(resolve(res[0], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
         if key.src.sym is None or key.dst.sym is None:
             stats.ignored += 1
