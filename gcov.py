@@ -20,11 +20,19 @@ from collections import Counter, defaultdict, namedtuple
 from itertools import groupby
 from struct import pack
 from typing import BinaryIO, NamedTuple
+import argparse
 
 sys.path.append(os.environ['PERF_EXEC_PATH'] + \
 	'/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
 from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip
+
+ap = argparse.ArgumentParser()
+ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file")
+ap.add_argument('--threshold', default=10, help="Min number of samples for location to output")
+ap.add_argument('--verbose', action='store_true', help="Print every sample")
+ap.add_argument('--top', default=0, help="Print N top samples")
+args = ap.parse_args()
 
 def trace_begin():
     pass
@@ -95,7 +103,8 @@ def wfunc_instance(f: BinaryIO,
         count = sum((b.count for b in branches))
         wcounter(f, count)
 
-        print(branches[0], len(branches), "count", count, "num_calls", num_calls)
+        if args.verbose:
+            print(branches[0], len(branches), "count", count, "num_calls", num_calls)
         # also dump call targets to other functions
         if num_calls > 0:
             for b in branches:
@@ -123,13 +132,15 @@ def gen_func_table(stats: Stats) -> defaultdict[str, list[Branch]]:
 
 def trace_end():
     print("%d total, %d ignored" % (stats.total, stats.ignored), file=sys.stderr)
-    for a, b in stats.branches.most_common(10):
-        print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.), file=sys.stderr)
+
+    if args.top > 0:
+        for a, b in stats.branches.most_common(args.top):
+            print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.), file=sys.stderr)
 
     string_table, string_index = gen_strtable(stats)
     func_table = gen_func_table(stats)
 
-    with open("file.gcov", "wb") as f:
+    with open(args.output, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
         w32(f, GCOV_VERSION)
         w32(f, 0)
