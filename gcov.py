@@ -213,12 +213,12 @@ def process_event(param_dict):
                         if res[1] < symres[1]:
                             if args.verbose:
                                 print("symbol %s %s sample %s has negative line offset" % (sym, symres, res))
-                            return Location(None, 0, 0)
+                            return Location("", 0, 0)
                         return Location(sym, fid, gen_offset(res[1] - symres[1], res[2]))
                     # XXX check inline stack
-            return Location(None, 0, 0)
+            return Location("", 0, 0)
         key = Key(resolve(res[0], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
-        if key.src.sym is None or key.dst.sym is None:
+        if not key.src.sym or not key.dst.sym:
             stats.ignored += 1
             continue
         stats.branches[key] += 1
