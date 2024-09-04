@@ -8,15 +8,23 @@ set -x
 set -e
 
 test() {
-i=$1
+local i=$1
 $CC -g -O2 -o ${i} ${i}.c
 $PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
 $PERF script -i ${i}.data gcov.py ${i}.gcov
 dump_gcov ${i}.gcov
 $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
+./${i}.opt
 }
 
 test tcall
 test tswitch
 test tgoto
 
+if [ "$1" = "random" ] ; then
+	for (( i=0; i < ${2:-10}; i++ )) ; do
+		csmith > t$i.c
+		test t$i
+		rm t${i}.c t${i} t${i}.data t${i}.gcov t${i}.opt
+	done
+fi
