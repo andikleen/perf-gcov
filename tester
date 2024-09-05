@@ -21,6 +21,7 @@ $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
 test tcall
 test tswitch
 test tgoto
+test tinlines
 
 if [ "$1" = "random" ] ; then
 	for (( i=0; i < ${2:-10}; i++ )) ; do
