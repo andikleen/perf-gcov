@@ -5,10 +5,7 @@
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
 # open:
-# threshold
 # callers inline stack (need perf change)
-# focus binary
-# call sites
 # handle non unique symbols
 # output multiple gcovs based on buildid
 # unit tests
