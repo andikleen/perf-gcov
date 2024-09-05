@@ -11,7 +11,7 @@ test() {
 local i=$1
 $CC -g -O2 -o ${i} ${i}.c
 $PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
-$PERF script -i ${i}.data gcov.py ${i}.gcov
+$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i}
 ./dump.py ${i}.gcov
 # dump_gcov ${i}.gcov
 $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
