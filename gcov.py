@@ -48,8 +48,6 @@ HIST_TYPE_INDIR_CALL_TOPN = 7
 
 Location = NamedTuple('Location', [('sym', str), ('fileid', int), ('offset', int)])
 Key = NamedTuple('Key', [('src', Location), ('dst', Location)])
-Callsite = NamedTuple('Callsite', [('callersym', str), ('offset', int),
-				   ('callers', list[Location]), ('count', int)])
 Branch = NamedTuple('Branch', [('src', Location), ('dst', Location),
                                 ('count', int)])
 
