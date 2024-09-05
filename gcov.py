@@ -22,6 +22,7 @@ from struct import pack
 import struct
 from typing import BinaryIO, NamedTuple
 import argparse
+import os.path
 
 sys.path.append(os.environ['PERF_EXEC_PATH'] + \
 	'/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
@@ -29,10 +30,11 @@ sys.path.append(os.environ['PERF_EXEC_PATH'] + \
 from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip
 
 ap = argparse.ArgumentParser()
-ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file")
+ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
 ap.add_argument('--threshold', default=10, help="Min number of samples for location to output")
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, help="Print N top samples")
+ap.add_argument('--binary', action='append', help="Only use samples for binary specified as basename. Can be used multiple times.", default=[])
 args = ap.parse_args()
 
 def trace_begin():
@@ -198,7 +200,9 @@ def process_event(param_dict):
             stats.ignored += 1
             continue
 
-        def resolve(res:tuple[str, int, int], s:str, ip:int) -> Location:
+        def resolve(res:tuple[str, int, int, str, str], s:str, ip:int) -> Location:
+            if args.binary and os.path.basename(res[3]) not in args.binary:
+                return Location("", 0, 0)
             if "+" in s:
                 sym, ipoff = s.split("+")
                 stats.functions.add(sym)
