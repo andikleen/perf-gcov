@@ -13,7 +13,6 @@
 
 import os
 import sys
-import pprint
 from collections import Counter, defaultdict, namedtuple
 from itertools import groupby
 from struct import pack
@@ -49,8 +48,9 @@ HIST_TYPE_INDIR_CALL_TOPN = 7
 
 Location = NamedTuple('Location', [('sym', str),
                                    ('srcid', int),
-                                   ('offset', int),
-                                   ('exeid', int)])
+                                   ('exeid', int),
+                                   ('offset', int)])
+EmptyLocation = Location("", 0, 0, 0)
 Key = NamedTuple('Key', [('src', Location),
                          ('dst', Location)])
 Branch = NamedTuple('Branch', [('src', Location),
@@ -66,13 +66,15 @@ class Stats:
         self.errored = 0
         self.crossed = 0
         self.total = 0
+        self.ignored_branches = 0
+        self.total_branches = 0
         self.branches : Counter[Key] = Counter()
         # XXX need file id to handle non unique
-        self.functions : set[str] = set()
-        self.filenames : dict[str,int] = dict()
+        self.functions : set[tuple[int, int, str]] = set()
+        self.srcnames : dict[str,int] = dict()
         self.exenames : dict[str, int] = dict()
         self.inlinestacks : dict[tuple[int, int], list[Inline]] = dict()
-        self.next_id = 0
+        self.next_id = 1
 
 stats = Stats()
 
@@ -117,7 +119,7 @@ def find_sym_line(exe: str, sym: str) -> int:
     if sym in sym_lines[exe]:
         return sym_lines[exe][sym]
     if sym not in warned:
-        print("cannot find symbol %s in %s" % (sym, exe))
+        print("cannot resolve line of symbol %s in %s" % (sym, exe))
         warned.add(sym)
     return 0
 
@@ -140,18 +142,30 @@ def gen_offset(line: int, disc: int) -> int:
     assert line >= 0, "line %d" % line
     return (line << 16) | disc
 
+def valid_call(b: Branch, func: str) -> bool:
+    return b.count >= args.threshold and b.src.sym != b.dst.sym and b.src.sym == func
+
 def wfunc_instance(f: BinaryIO,
                    all_branches: list[Branch],
                    string_index: dict[str, int],
                    func: str) -> None:
     sbranches = sorted(all_branches, key=lambda x: x.src)
-    wcounter(f, sum((x.count for x in all_branches)))
-    w32(f, string_index[func])
     num = 0
+    hcount = 0
     for src, branchit in groupby(sbranches, lambda x: x.src):
-        if sum((b.count for b in branchit)) < args.threshold:
+        branches = list(branchit)
+        count = sum((b.count for b in branches))
+        if count < args.threshold:
+            stats.ignored_branches += count
             continue
+        if branches[0].src.sym != func:
+            stats.ignored_branches += count
+            continue
+        stats.total_branches += count
+        hcount += count
         num += 1
+    wcounter(f, hcount)
+    w32(f, string_index[func])
     w32(f, num)
     w32(f, 0) # call sites XXX
 
@@ -160,10 +174,12 @@ def wfunc_instance(f: BinaryIO,
         count = sum((b.count for b in branches))
         if count < args.threshold:
             continue
-        # file contains only source offset
+        if branches[0].src.sym != func:
+            continue
+        # contains only source offset
         # target is implicitly known by the compiler
         w32(f, branches[0].src.offset)
-        num_calls = sum((1 if b.src.sym != b.dst.sym and b.count >= args.threshold else 0 for b in branches))
+        num_calls = sum((1 if valid_call(b, func) else 0 for b in branches))
         w32(f, num_calls)
         wcounter(f, count)
 
@@ -175,36 +191,37 @@ def wfunc_instance(f: BinaryIO,
                 # should check branch type to see if it could be recursion
                 # otherwise cannot distinguish from an ordinary branch
                 # however this wouldn't work for recursive tail calls?
-                if b.dst.sym == b.src.sym:
-                    continue
-                if b.count < args.threshold:
+                if not valid_call(b, func):
                     continue
                 w32(f, HIST_TYPE_INDIR_CALL_TOPN)
                 wcounter(f, string_index[b.dst.sym])
                 wcounter(f, b.count)
                 
     # dump inline stack
+    #if len(sbranches) 
 
 def gen_strtable(stats: Stats):
-    string_table = sorted(stats.functions)
+    string_table = sorted(((x[2] for x in stats.functions)))
     string_index = { name: i for i, name in enumerate(string_table) }
     return string_table, string_index
 
-def gen_func_table(stats: Stats) -> defaultdict[str, list[Branch]]:
-    func_table: defaultdict[str, list[Branch]] = defaultdict(list)
-    # XXX handle non unique symbols. file match?
+def gen_func_table(stats: Stats) -> defaultdict[tuple[int, int, str], list[Branch]]:
+    func_table: defaultdict[tuple[int, int, str], list[Branch]] = defaultdict(list)
     for k, count in stats.branches.items():
-        func_table[k.src.sym].append(Branch(k.src, k.dst, count))
+        func_table[(k.src.exeid, k.src.srcid, k.src.sym)].append(Branch(k.src, k.dst, count))
+        if k.src.sym != k.dst.sym:
+            func_table[(k.dst.exeid, k.dst.srcid, k.dst.sym)].append(Branch(k.src, k.dst, count))
     return func_table
 
 def trace_end():
     print("%d total, %d ignored, %d errored, %d crossed" %
-          (stats.total, stats.ignored, stats.errored, stats.crossed), file=sys.stderr)
+          (stats.total, stats.ignored, stats.errored, stats.crossed))
 
     if args.top > 0:
         for a, b in stats.branches.most_common(args.top):
-            print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.), file=sys.stderr)
+            print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.))
 
+    # XXX multiple output files
     string_table, string_index = gen_strtable(stats)
     func_table = gen_func_table(stats)
 
@@ -224,8 +241,8 @@ def trace_end():
         w32(f, GCOV_TAG_AFDO_FUNCTION)
         w32(f, 0) # length. ignored by gcc. XXX fill in
         w32(f, len(stats.functions))
-        for func in stats.functions:
-            wfunc_instance(f, func_table[func], string_index, func)
+        for k in stats.functions:
+            wfunc_instance(f, func_table[k], string_index, k[2])
 
         # not used by gcc
         w32(f, GCOV_TAG_AFDO_MODULE_GROUPING)
@@ -235,18 +252,24 @@ def trace_end():
         w32(f, GCOV_TAG_AFDO_WORKING_SET)
         w32(f, 0)
         w32(f, 0)
+
+    print("%d processed branches, %.2f%% ignored" %
+          (stats.total_branches,
+           (float(stats.ignored_branches) / stats.total_branches * 100. if stats.total_branches else 0.0)))
         
 def get_id(d: dict[str,int], fn:str) -> int:
     if fn in d:
-        fid = d[fn]
-    else:
-        fid = stats.next_id
-        stats.next_id += 1
-        d[fn] = fid
+        return d[fn]
+    fid = stats.next_id
+    stats.next_id += 1
+    d[fn] = fid
+    if fn == "/":
+        import pdb
+        pdb.set_trace()
     return fid
 
 def get_fid(fn:str) -> int:
-    return get_id(stats.filenames, fn)
+    return get_id(stats.srcnames, fn)
 
 def get_eid(fn:str) -> int:
     return get_id(stats.exenames, fn)
@@ -254,17 +277,20 @@ def get_eid(fn:str) -> int:
 def fmtres(x):
     return "%s at %s:%d:%d" % (x[3], x[0], x[1], x[2])
 
-# XXX cache
-# XXX add file id
+iwarned = set()
+
 def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]:
     def inline_tuple(x : tuple[str,int,int,str]) -> Inline:
         sl = find_sym_line(exe, x[3])
         if sl == 0 or sl > x[2]:
-            if args.verbose:
+            if args.verbose and x not in iwarned:
                 print("Cannot resolve inline %s" % (fmtres(x)))
+                iwarned.add(x)
             return Inline(0, "", 0)
         return Inline(get_fid(x[0]), x[3], gen_offset(x[1] - sl, x[2]))
     return [inline_tuple(x) for x in il]
+
+i2warned = set()
 
 def process_event(param_dict):
     for br, bsym in zip(param_dict["brstack"], param_dict["brstacksym"]):
@@ -282,22 +308,25 @@ def process_event(param_dict):
                     s:str,
                     ip:int) -> Location:
             if args.binary and os.path.basename(res[3]) not in args.binary:
-                return Location("", 0, 0, 0)
+                return EmptyLocation
             if "+" in s:
                 sym, ipoff = s.split("+")
-                stats.functions.add(sym)
                 symip = ip - int(ipoff, 16)
                 symres = perf_resolve_ip(perf_script_context, symip)
                 if symres:
+                    eid = get_eid(symres[3])
+                    fid = get_fid(symres[0])
+                    key = (eid, fid, sym)
+                    stats.functions.add(key)
                     if symres[0] == res[0]:
-                        fid = get_fid(res[0])
                         if res[1] < symres[1]:
-                            if args.verbose:
+                            if args.verbose and (symres, res) not in i2warned:
                                 print("symbol %s %s sample %s has negative line offset" % (
                                     sym, fmtres(symres), fmtres(res)))
-                            return Location("", 0, 0, 0)
-                        return Location(sym, fid, gen_offset(res[1] - symres[1], res[2]), get_eid(res[3]))
-            return Location("", 0, 0, 0)
+                                i2warned.add((symres, res))
+                            return EmptyLocation
+                        return Location(sym, fid, eid, gen_offset(res[1] - symres[1], res[2]))
+            return EmptyLocation
         key = Key(resolve(res[0], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
         if not key.src.sym or not key.dst.sym:
             stats.errored += 1
