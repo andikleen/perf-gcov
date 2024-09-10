@@ -26,7 +26,7 @@ import subprocess
 sys.path.append(os.environ['PERF_EXEC_PATH'] + \
 	'/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
-from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip
+from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip # type: ignore
 
 ap = argparse.ArgumentParser()
 ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
