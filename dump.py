@@ -1,6 +1,12 @@
 #!/usr/bin/python
 import struct
 import sys
+import argparse
+
+ap = argparse.ArgumentParser()
+ap.add_argument('gcovfile', type=argparse.FileType('rb'))
+ap.add_argument('--max-count', type=int, help="Error out if any count is larger than N")
+args = ap.parse_args()
 
 GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
 GCOV_TAG_AFDO_FUNCTION = 0xac000000
@@ -27,15 +33,23 @@ def expect(what, val, exp):
     if val != exp:
         sys.exit("for %s expect %x got val %x" % (what, exp, val))
 
+def warn_expect(what, val, exp):
+    if val != exp:
+        print("for %s expect %x got val %x" % (what, exp, val))
+
+def check_counter(count):
+    if args.max_count and count > args.max_count:
+        sys.exit("count value %d larger than %d" % (count, args.max_count))
+
 def fmt_offset(offset):
     if offset & 0xffff:
         return "%d.%d" % (offset >> 16, offset & 0xffff)
     return "%d" % (offset >> 16)
 
-f = open(sys.argv[1], "rb")
+f = args.gcovfile
 
 expect("magic", r32(f), GCOV_DATA_MAGIC)
-expect("version", r32(f), GCOV_VERSION)
+warn_expect("version", r32(f), GCOV_VERSION)
 r32(f)
 
 expect("string table magic", r32(f), GCOV_TAG_AFDO_FILE_NAMES)
@@ -52,6 +66,7 @@ for i in range(num_funcs):
     head = rcounter(f)
     fname = str_table[r32(f)]
     print("%s: %d" % (fname, head))
+    check_counter(head)
     num_pos = r32(f)
     callsites = r32(f)
     for p in range(num_pos):
@@ -59,6 +74,7 @@ for i in range(num_funcs):
         num_targets = r32(f)
         counter = rcounter(f)
         print("  %s: %d" % (fmt_offset(offset), counter))
+        check_counter(counter)
         for t in range(num_targets):
             expect("topn hist type", r32(f), HIST_TYPE_INDIR_CALL_TOPN)
             target = str_table[rcounter(f)]
