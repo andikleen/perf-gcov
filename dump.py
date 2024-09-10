@@ -83,13 +83,11 @@ for i in range(num_funcs):
             check_counter(count)
     for i in range(callsites):
         offset = r32(f)
-        count = rcounter(f)
         name = str_table[r32(f)]
         num_pos = r32(f)
         num_call = r32(f)
-        print("%s%s %s %d num_pos %d num_call %d" %
-              (" " * (i+3)*2, name, fmt_offset(offset), counter, num_pos, num_call))
-        check_counter(count)
+        print("%s%s %s num_pos %d num_call %d" %
+              (" " * (i+3)*2, name, fmt_offset(offset), num_pos, num_call))
         if num_pos != 0:
             sys.exit("expected nested num_pos to be 0")
         if num_call != 0:

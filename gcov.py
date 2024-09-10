@@ -215,10 +215,9 @@ def wfunc_instance(f: BinaryIO,
             if i.offset == 0:
                 continue
             w32(f, i.offset)
-            wcounter(f, hcount)
             w32(f, string_index[i.name])
-            w32(f, 0)
-            w32(f, 0)
+            w32(f, 0) # num pos counts
+            w32(f, 0) # call sites
 
 def gen_strtable(stats: Stats):
     string_table = sorted(chain((x[2] for x in stats.functions), stats.inlinestrings))
