@@ -15,7 +15,7 @@
 import os
 import sys
 from collections import Counter, defaultdict, namedtuple
-from itertools import groupby
+from itertools import groupby, chain
 from struct import pack
 import struct
 from typing import BinaryIO, NamedTuple
@@ -75,10 +75,12 @@ class Stats:
         self.functions : set[tuple[int, int, str]] = set()
         self.srcnames : dict[str,int] = dict()
         self.exenames : dict[str, int] = dict()
-        self.inlinestacks : dict[tuple[int, int], list[Inline]] = dict()
+        self.inlinestacks : dict[Location, list[Inline]] = dict()
+        self.inlinestrings : set[str] = set()
         self.next_id = 1
 
 stats = Stats()
+dwarned = set()
 
 # to generate inline relative offsets need the abstract origin of the inlines
 # this requires reading the .debug_info because perf doesn't know it because the
@@ -105,9 +107,10 @@ def read_sym_lines(exe: str) -> dict[str, int] :
                     name = n[7]
                 seen += 1
             if n[1] == "DW_AT_decl_line" and seen == 2:
+                if name in d and name not in dwarned:
+                    print("duplicated symbol %s may be mishandled" % name)
+                    dwarned.add(name)
                 line = int(n[3])
-                seen += 1
-            if n[1] == "DW_AT_inline" and n[3] == "1" and seen == 3:
                 d[name] = line
                 if args.dump_dwarf:
                     print("dwarf", name, line)
@@ -124,6 +127,7 @@ def find_sym_line(exe: str, sym: str) -> int:
         return sym_lines[exe][sym]
     if sym not in warned:
         print("cannot resolve line of symbol %s in %s" % (sym, exe))
+        print(sym_lines[exe])
         warned.add(sym)
     return 0
 
@@ -156,6 +160,7 @@ def wfunc_instance(f: BinaryIO,
     sbranches = sorted(all_branches, key=lambda x: x.src)
     num = 0
     hcount = 0
+    inlines = None
     for src, branchit in groupby(sbranches, lambda x: x.src):
         branches = list(branchit)
         count = sum((b.count for b in branches))
@@ -165,13 +170,16 @@ def wfunc_instance(f: BinaryIO,
         if branches[0].src.sym != func:
             stats.ignored_branches += count
             continue
+        if inlines is None:
+            if branches[0].src in stats.inlinestacks:
+                inlines = stats.inlinestacks[branches[0].src]
         stats.total_branches += count
         hcount += count
         num += 1
     wcounter(f, hcount)
     w32(f, string_index[func])
     w32(f, num)
-    w32(f, 0) # call sites XXX
+    w32(f, sum((1 if i.offset else 0 for i in inlines)) if inlines else 0)
 
     for src, branchit in groupby(sbranches, lambda x: x.src):
         branches = list(branchit)
@@ -202,10 +210,18 @@ def wfunc_instance(f: BinaryIO,
                 wcounter(f, b.count)
                 
     # dump inline stack
-    #if len(sbranches) 
+    if inlines:
+        for i in inlines:
+            if i.offset == 0:
+                continue
+            w32(f, i.offset)
+            wcounter(f, hcount)
+            w32(f, string_index[i.name])
+            w32(f, 0)
+            w32(f, 0)
 
 def gen_strtable(stats: Stats):
-    string_table = sorted(((x[2] for x in stats.functions)))
+    string_table = sorted(chain((x[2] for x in stats.functions), stats.inlinestrings))
     string_index = { name: i for i, name in enumerate(string_table) }
     return string_table, string_index
 
@@ -286,11 +302,19 @@ iwarned = set()
 def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]:
     def inline_tuple(x : tuple[str,int,int,str]) -> Inline:
         sl = find_sym_line(exe, x[3])
-        if sl == 0 or sl > x[2]:
+        if sl == 0 or sl > x[1]:
             if args.verbose and x not in iwarned:
-                print("Cannot resolve inline %s" % (fmtres(x)))
+                if sl == 0:
+                    print("Cannot resolve inline %s" % (fmtres(x)))
+                if sl > x[1]:
+                    print("inline line %d for %s beyond line %d for inline stack %s" % (
+                        sl,
+                        x[3],
+                        x[1], 
+                        x))
                 iwarned.add(x)
             return Inline(0, "", 0)
+        stats.inlinestrings.add(x[3])
         return Inline(get_fid(x[0]), x[3], gen_offset(x[1] - sl, x[2]))
     return [inline_tuple(x) for x in il]
 
@@ -337,6 +361,7 @@ def process_event(param_dict):
             continue
         stats.branches[key] += 1
         if res[0][5]:
-            ikey = (get_eid(res[0][3]), br["from"])
+            ikey = key.src
             if ikey not in stats.inlinestacks:
+                print("inline", ikey)
                 stats.inlinestacks[ikey] = gen_inline(res[0][3], res[0][5])
