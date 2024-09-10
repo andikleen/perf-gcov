@@ -34,6 +34,7 @@ ap.add_argument('--threshold', default=10, help="Min number of samples for locat
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, help="Print N top samples")
 ap.add_argument('--binary', action='append', help="Only use samples for binary specified as basename. Can be used multiple times.", default=[])
+ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
 args = ap.parse_args()
 
 def trace_begin():
@@ -108,6 +109,8 @@ def read_sym_lines(exe: str) -> dict[str, int] :
                 seen += 1
             if n[1] == "DW_AT_inline" and n[3] == "1" and seen == 3:
                 d[name] = line
+                if args.dump_dwarf:
+                    print("dwarf", name, line)
                 seen = 0
         return d
 
