@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # generate gcc gcov autofdo files from perf record -b
 # gcc -O2 -o workload ...
 # perf record -b -c 100003 -e branches:upp workload
@@ -5,7 +6,6 @@
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
 # open:
-# make self executing
 # callers inline stack
 # handle non unique symbols using dwarf (same file)
 # check buildid
@@ -23,10 +23,20 @@ import argparse
 import os.path
 import subprocess
 
-sys.path.append(os.environ['PERF_EXEC_PATH'] + \
-	'/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
+ppath = os.getenv('PERF_EXEC_PATH')
+if ppath is None:
+    perf = os.getenv('PERF')
+    if perf is None:
+        perf = "perf"
+    print(sys.argv)
+    sys.exit(subprocess.run([perf, "script", sys.argv[0]] + sys.argv[1:]))
 
-from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip # type: ignore
+sys.path.append(ppath + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
+
+try:
+    from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip # type: ignore
+except ImportError:
+    sys.exit("Need perf version with perf_brstack_srcline support") # XXX add version
 
 ap = argparse.ArgumentParser()
 ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
