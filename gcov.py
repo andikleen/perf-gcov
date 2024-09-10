@@ -5,9 +5,10 @@
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
 # open:
+# make self executing
 # callers inline stack
-# handle non unique symbols
-# lookup based on buildid
+# handle non unique symbols using dwarf (same file)
+# check buildid
 # output multiple gcovs
 # unit tests
 
