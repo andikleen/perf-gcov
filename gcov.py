@@ -283,9 +283,6 @@ def get_id(d: dict[str,int], fn:str) -> int:
     fid = stats.next_id
     stats.next_id += 1
     d[fn] = fid
-    if fn == "/":
-        import pdb
-        pdb.set_trace()
     return fid
 
 def get_fid(fn:str) -> int:
