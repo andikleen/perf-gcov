@@ -1,2 +1,2 @@
 #!/bin/sh
-mypy gcov.py  --check-untyped-defs
+mypy gcov.py dump.py --check-untyped-defs
