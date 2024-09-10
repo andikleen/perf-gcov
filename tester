@@ -7,6 +7,11 @@ PERF=${PERF:-../perf}
 set -x
 set -e
 
+failed() {
+        echo FAILED
+}
+trap failed ERR 0
+
 test() {
 local i=$1
 $CC -g -O2 -o ${i} ${i}.c
@@ -30,3 +35,5 @@ if [ "$1" = "random" ] ; then
 		rm t${i}.c t${i} t${i}.data t${i}.gcov t${i}.opt
 	done
 fi
+
+trap "" ERR 0
