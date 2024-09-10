@@ -208,7 +208,7 @@ def wfunc_instance(f: BinaryIO,
                 w32(f, HIST_TYPE_INDIR_CALL_TOPN)
                 wcounter(f, string_index[b.dst.sym])
                 wcounter(f, b.count)
-                
+
     # dump inline stack
     if inlines:
         for i in inlines:
@@ -276,7 +276,7 @@ def trace_end():
     print("%d processed branches, %.2f%% ignored" %
           (stats.total_branches,
            (float(stats.ignored_branches) / stats.total_branches * 100. if stats.total_branches else 0.0)))
-        
+
 def get_id(d: dict[str,int], fn:str) -> int:
     if fn in d:
         return d[fn]
@@ -291,28 +291,31 @@ def get_fid(fn:str) -> int:
 def get_eid(fn:str) -> int:
     return get_id(stats.exenames, fn)
 
-def fmtres(x):
-    return "%s at %s:%d:%d" % (x[3], x[0], x[1], x[2])
+SFILE, SLINE, SDISC, SEXE, SBUILDID, SINLINE = range(6)
+IFILE, ILINE, IDISC, ISYM = range(4)
+
+def ifmtres(x):
+    return "%s at %s:%d:%d" % (x[ISYM], x[IFILE], x[ILINE], x[IDISC])
 
 iwarned = set()
 
 def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]:
     def inline_tuple(x : tuple[str,int,int,str]) -> Inline:
-        sl = find_sym_line(exe, x[3])
-        if sl == 0 or sl > x[1]:
+        sl = find_sym_line(exe, x[ISYM])
+        if sl == 0 or sl > x[ILINE]:
             if args.verbose and x not in iwarned:
                 if sl == 0:
-                    print("Cannot resolve inline %s" % (fmtres(x)))
-                if sl > x[1]:
+                    print("Cannot resolve inline %s" % (ifmtres(x)))
+                if sl > x[ILINE]:
                     print("inline line %d for %s beyond line %d for inline stack %s" % (
                         sl,
-                        x[3],
-                        x[1], 
+                        x[ISYM],
+                        x[ILINE],
                         x))
                 iwarned.add(x)
             return Inline(0, "", 0)
-        stats.inlinestrings.add(x[3])
-        return Inline(get_fid(x[0]), x[3], gen_offset(x[1] - sl, x[2]))
+        stats.inlinestrings.add(x[ISYM])
+        return Inline(get_fid(x[IFILE]), x[ISYM], gen_offset(x[ILINE] - sl, x[IDISC]))
     return [inline_tuple(x) for x in il]
 
 i2warned = set()
@@ -332,33 +335,33 @@ def process_event(param_dict):
         def resolve(res:tuple[str, int, int, str, str, tuple[tuple[str,int,int,str], ...]],
                     s:str,
                     ip:int) -> Location:
-            if args.binary and os.path.basename(res[3]) not in args.binary:
+            if args.binary and os.path.basename(res[SEXE]) not in args.binary:
                 return EmptyLocation
             if "+" in s:
                 sym, ipoff = s.split("+")
                 symip = ip - int(ipoff, 16)
                 symres = perf_resolve_ip(perf_script_context, symip)
                 if symres:
-                    eid = get_eid(symres[3])
-                    fid = get_fid(symres[0])
+                    eid = get_eid(symres[SEXE])
+                    fid = get_fid(symres[SFILE])
                     key = (eid, fid, sym)
                     stats.functions.add(key)
-                    if symres[0] == res[0]:
-                        if res[1] < symres[1]:
+                    if symres[SFILE] == res[SFILE]:
+                        if res[SLINE] < symres[SLINE]:
                             if args.verbose and (symres, res) not in i2warned:
                                 print("symbol %s %s sample %s has negative line offset" % (
-                                    sym, fmtres(symres), fmtres(res)))
+                                    sym, ifmtres(symres), ifmtres(res)))
                                 i2warned.add((symres, res))
                             return EmptyLocation
-                        return Location(sym, fid, eid, gen_offset(res[1] - symres[1], res[2]))
+                        return Location(sym, fid, eid, gen_offset(res[SLINE] - symres[SLINE], res[SDISC]))
             return EmptyLocation
-        key = Key(resolve(res[0], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
+        key = Key(resolve(res[SFILE], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
         if not key.src.sym or not key.dst.sym:
             stats.errored += 1
             continue
         stats.branches[key] += 1
-        if res[0][5]:
+        if res[0][SINLINE]:
             ikey = key.src
             if ikey not in stats.inlinestacks:
                 print("inline", ikey)
-                stats.inlinestacks[ikey] = gen_inline(res[0][3], res[0][5])
+                stats.inlinestacks[ikey] = gen_inline(res[0][SEXE], res[0][SINLINE])
