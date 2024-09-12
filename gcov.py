@@ -6,7 +6,7 @@
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
 # open:
-# create_gcov compatibility
+# fix nesting
 # handle non unique symbols using dwarf (same file)
 # check buildid
 # output multiple gcovs
