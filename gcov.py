@@ -410,5 +410,6 @@ def process_event(param_dict):
         if res[0][SINLINE]:
             ikey = key.src
             if ikey not in stats.inlinestacks:
-                print("inline", ikey)
+                if args.verbose:
+                    print("inline", ikey)
                 stats.inlinestacks[ikey] = gen_inline(res[0][SEXE], res[0][SINLINE])
