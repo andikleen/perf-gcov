@@ -281,25 +281,33 @@ def trace_end():
 
         # write string table
         w32(f, GCOV_TAG_AFDO_FILE_NAMES)
-        w32(f, sum((len(s) + 1 for s in string_table)))
+        w32(f, sum((len(s) + 5 for s in string_table)) + 4)
         w32(f, len(string_table))
         for fn in string_table:
             wstring(f, fn)
 
         # write function profile
         w32(f, GCOV_TAG_AFDO_FUNCTION)
-        w32(f, 0) # length. ignored by gcc. XXX fill in
+        lenoff = f.tell()
+        w32(f, 0) # length. ignored by gcc
+        print("Writing %d functions" % len(stats.functions))
         w32(f, len(stats.functions))
         for k in stats.functions:
-            wfunc_instance(f, func_table[k], string_index, k[2])
+            wfunc_instance(f, func_table[k], string_index, k.name)
+        # XXX handle pipes?
+        endoff = f.tell()
+        f.seek(lenoff, 0)
+        print("Data %d" % (endoff - lenoff))
+        w32(f, endoff - lenoff)
+        f.seek(endoff, 0)
 
         # not used by gcc
         w32(f, GCOV_TAG_AFDO_MODULE_GROUPING)
-        w32(f, 0)
+        w32(f, 4)
         w32(f, 0)
 
         w32(f, GCOV_TAG_AFDO_WORKING_SET)
-        w32(f, 0)
+        w32(f, 4)
         w32(f, 0)
 
     print("%d processed branches, %.2f%% ignored" %
