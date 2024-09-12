@@ -62,6 +62,7 @@ for i in range(num):
 expect("function magic", r32(f), GCOV_TAG_AFDO_FUNCTION)
 r32(f) # len
 num_funcs = r32(f)
+print("num functions %d" % num_funcs)
 for i in range(num_funcs):
     head = rcounter(f)
     fname = str_table[r32(f)]
