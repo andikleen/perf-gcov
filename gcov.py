@@ -17,7 +17,6 @@ import os
 import sys
 from collections import Counter, defaultdict, namedtuple
 from itertools import groupby, chain
-from struct import pack
 import struct
 from typing import BinaryIO, NamedTuple, Final
 import argparse
@@ -163,14 +162,14 @@ def find_sym_line(exe: str, sym: str) -> int:
 
 def w32(f: BinaryIO, v: int):
     try:
-        f.write(pack("I", v))
+        f.write(struct.pack("I", v))
     except struct.error:
         sys.exit("bad value for w32 %x" % v)
 
 def wstring(f: BinaryIO, s: str):
     s += "\0"
     w32(f, len(s))
-    f.write(pack("%ds" % len(s), s.encode('utf-8')))
+    f.write(struct.pack("%ds" % len(s), s.encode('utf-8')))
 
 def wcounter(f: BinaryIO, v: int):
     w32(f, (v       ) & 0xffffffff)
@@ -328,6 +327,7 @@ def get_fid(fn:str) -> int:
 def get_eid(fn:str) -> int:
     return get_id(stats.exenames, fn)
 
+# does not really work for mypy. have to use some constants to make it happy.
 SFILE: Final[int] = 0
 SLINE: Final[int] = 1
 SDISC: Final[int] = 2
@@ -366,7 +366,6 @@ i2warned = set()
 
 def process_event(param_dict):
     for br, bsym in zip(param_dict["brstack"], param_dict["brstacksym"]):
-        #pprint.pp(br)
         stats.total += 1
         if br["from_dsoname"] != br["to_dsoname"]:
             stats.crossed += 1
@@ -402,6 +401,7 @@ def process_event(param_dict):
                         lineoff = res[SLINE] - symres[SLINE]
                         return Location(sym, fid, eid, gen_offset(lineoff, res[2]))
             return EmptyLocation
+
         key = Key(resolve(res[SFILE], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
         if not key.src.sym or not key.dst.sym:
             stats.errored += 1
