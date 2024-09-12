@@ -379,7 +379,7 @@ def process_event(param_dict):
         def resolve(res:tuple[str, int, int, str, str, tuple[tuple[str,int,int,str], ...]],
                     s:str,
                     ip:int) -> Location:
-            if args.binary and os.path.basename(res[SEXE]) not in args.binary:
+            if args.binary and os.path.basename(res[3]) not in args.binary:
                 return EmptyLocation
             if "+" in s:
                 sym, ipoff = s.split("+")
