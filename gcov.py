@@ -29,8 +29,17 @@ if ppath is None:
     perf = os.getenv('PERF')
     if perf is None:
         perf = "perf"
-    print(sys.argv)
-    sys.exit(subprocess.run([perf, "script", sys.argv[0]] + sys.argv[1:]))
+    if len(sys.argv) == 1:
+        sys.exit("Usage: gcov.py --gcov gcovfile --profile perf.data --binary elfbinary")
+    data = "perf.data"
+    if "--profile" in sys.argv:
+        i = sys.argv.index("--profile")
+        del sys.argv[i]
+        data = sys.argv[i]
+        del sys.argv[i]
+    pargs = [perf, "script", "-i", data, sys.argv[0]] + sys.argv[1:]
+    print(pargs)
+    sys.exit(subprocess.run(pargs).returncode)
 
 sys.path.append(ppath + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
@@ -41,6 +50,8 @@ except ImportError:
 
 ap = argparse.ArgumentParser()
 ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
+ap.add_argument('--profile', '-i', help="Profile data. Default perf.data") # handled by perf
+ap.add_argument('--gcov', help="gcov output file")
 ap.add_argument('--threshold', default=10, help="Min number of samples for location to output")
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, help="Print N top samples")
@@ -263,7 +274,7 @@ def trace_end():
     string_table, string_index = gen_strtable(stats)
     func_table = gen_func_table(stats)
 
-    with open(args.output, "wb") as f:
+    with open(args.gcov if args.gcov else args.output, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
         w32(f, GCOV_VERSION)
         w32(f, 0)
