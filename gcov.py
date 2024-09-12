@@ -22,6 +22,7 @@ from typing import BinaryIO, NamedTuple, Final
 import argparse
 import os.path
 import subprocess
+import pathlib
 
 ppath = os.getenv('PERF_EXEC_PATH')
 if ppath is None:
@@ -293,12 +294,13 @@ def trace_end():
         w32(f, len(stats.functions))
         for k in stats.functions:
             wfunc_instance(f, func_table[k], string_index, k.name)
-        # XXX handle pipes?
-        endoff = f.tell()
-        f.seek(lenoff, 0)
-        print("Data %d" % (endoff - lenoff))
-        w32(f, endoff - lenoff)
-        f.seek(endoff, 0)
+
+        if not pathlib.Path(f.name).is_fifo():
+            endoff = f.tell()
+            f.seek(lenoff, 0)
+            print("Data length %d" % (endoff - lenoff))
+            w32(f, endoff - lenoff)
+            f.seek(endoff, 0)
 
         # not used by gcc
         w32(f, GCOV_TAG_AFDO_MODULE_GROUPING)
