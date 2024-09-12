@@ -6,10 +6,11 @@
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
 # open:
-# callers inline stack
+# create_gcov compatibility
 # handle non unique symbols using dwarf (same file)
 # check buildid
 # output multiple gcovs
+# support online mode
 # unit tests
 
 import os
