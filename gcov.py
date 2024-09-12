@@ -19,7 +19,7 @@ from collections import Counter, defaultdict, namedtuple
 from itertools import groupby, chain
 from struct import pack
 import struct
-from typing import BinaryIO, NamedTuple
+from typing import BinaryIO, NamedTuple, Final
 import argparse
 import os.path
 import subprocess
@@ -66,12 +66,20 @@ Location = NamedTuple('Location', [('sym', str),
 EmptyLocation = Location("", 0, 0, 0)
 Key = NamedTuple('Key', [('src', Location),
                          ('dst', Location)])
+Function = NamedTuple('Function', [('eid', int),
+                                   ('fid', int),
+                                   ('name', str)])
 Branch = NamedTuple('Branch', [('src', Location),
                                ('dst', Location),
                                ('count', int)])
 Inline = NamedTuple('Inline', [('fileid', int),
                                ('name', str),
                                ('offset', int)])
+
+PerfInline = NamedTuple('PerfInline', [('file', str),
+                                       ('line', int),
+                                       ('disc', int),
+                                       ('sym', str)])
 
 class Stats:
     def __init__(self):
@@ -83,8 +91,8 @@ class Stats:
         self.total_branches = 0
         self.branches : Counter[Key] = Counter()
         # XXX need file id to handle non unique
-        self.functions : set[tuple[int, int, str]] = set()
-        self.srcnames : dict[str,int] = dict()
+        self.functions : set[Function] = set()
+        self.srcnames : dict[str, int] = dict()
         self.exenames : dict[str, int] = dict()
         self.inlinestacks : dict[Location, list[Inline]] = dict()
         self.inlinestrings : set[str] = set()
@@ -231,16 +239,16 @@ def wfunc_instance(f: BinaryIO,
             w32(f, 0) # call sites
 
 def gen_strtable(stats: Stats):
-    string_table = sorted(chain((x[2] for x in stats.functions), stats.inlinestrings))
+    string_table = sorted(chain((x.name for x in stats.functions), stats.inlinestrings))
     string_index = { name: i for i, name in enumerate(string_table) }
     return string_table, string_index
 
-def gen_func_table(stats: Stats) -> defaultdict[tuple[int, int, str], list[Branch]]:
-    func_table: defaultdict[tuple[int, int, str], list[Branch]] = defaultdict(list)
+def gen_func_table(stats: Stats) -> defaultdict[Function, list[Branch]]:
+    func_table: defaultdict[Function, list[Branch]] = defaultdict(list)
     for k, count in stats.branches.items():
-        func_table[(k.src.exeid, k.src.srcid, k.src.sym)].append(Branch(k.src, k.dst, count))
+        func_table[Function(k.src.exeid, k.src.srcid, k.src.sym)].append(Branch(k.src, k.dst, count))
         if k.src.sym != k.dst.sym:
-            func_table[(k.dst.exeid, k.dst.srcid, k.dst.sym)].append(Branch(k.src, k.dst, count))
+            func_table[Function(k.dst.exeid, k.dst.srcid, k.dst.sym)].append(Branch(k.src, k.dst, count))
     return func_table
 
 def trace_end():
@@ -301,32 +309,39 @@ def get_fid(fn:str) -> int:
 def get_eid(fn:str) -> int:
     return get_id(stats.exenames, fn)
 
-SFILE, SLINE, SDISC, SEXE, SBUILDID, SINLINE = range(6)
-IFILE, ILINE, IDISC, ISYM = range(4)
+SFILE: Final[int] = 0
+SLINE: Final[int] = 1
+SDISC: Final[int] = 2
+SEXE: Final[int] = 3
+SBUILDID: Final[int] = 4
+SINLINE: Final[int] = 5
 
-def ifmtres(x):
-    return "%s at %s:%d:%d" % (x[ISYM], x[IFILE], x[ILINE], x[IDISC])
+def ifmtres(x:PerfInline):
+    return "%s at %s:%d:%d" % (x.sym, x.file, x.line, x.disc)
+
+def ifmtrest(x:tuple[str,int,int,str]):
+    return ifmtres(PerfInline(x[0], x[1], x[2], x[3]))
 
 iwarned = set()
 
 def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]:
-    def inline_tuple(x : tuple[str,int,int,str]) -> Inline:
-        sl = find_sym_line(exe, x[ISYM])
-        if sl == 0 or sl > x[ILINE]:
+    def inline_tuple(x : PerfInline) -> Inline:
+        sl = find_sym_line(exe, x.sym)
+        if sl == 0 or sl > x.line:
             if args.verbose and x not in iwarned:
                 if sl == 0:
                     print("Cannot resolve inline %s" % (ifmtres(x)))
-                if sl > x[ILINE]:
+                if sl > x.line:
                     print("inline line %d for %s beyond line %d for inline stack %s" % (
                         sl,
-                        x[ISYM],
-                        x[ILINE],
+                        x.sym,
+                        x.line,
                         x))
                 iwarned.add(x)
             return Inline(0, "", 0)
-        stats.inlinestrings.add(x[ISYM])
-        return Inline(get_fid(x[IFILE]), x[ISYM], gen_offset(x[ILINE] - sl, x[IDISC]))
-    return [inline_tuple(x) for x in il]
+        stats.inlinestrings.add(x.sym)
+        return Inline(get_fid(x.file), x.sym, gen_offset(x.line - sl, x.disc))
+    return [inline_tuple(PerfInline(x[0], x[1], x[2], x[3])) for x in il]
 
 i2warned = set()
 
@@ -354,16 +369,19 @@ def process_event(param_dict):
                 if symres:
                     eid = get_eid(symres[SEXE])
                     fid = get_fid(symres[SFILE])
-                    key = (eid, fid, sym)
+                    key = Function(eid, fid, sym)
                     stats.functions.add(key)
                     if symres[SFILE] == res[SFILE]:
                         if res[SLINE] < symres[SLINE]:
                             if args.verbose and (symres, res) not in i2warned:
                                 print("symbol %s %s sample %s has negative line offset" % (
-                                    sym, ifmtres(symres), ifmtres(res)))
+                                    sym,
+                                    ifmtrest(symres),
+                                    ifmtres(PerfInline(res[0], res[1], res[2], sym))))
                                 i2warned.add((symres, res))
                             return EmptyLocation
-                        return Location(sym, fid, eid, gen_offset(res[SLINE] - symres[SLINE], res[SDISC]))
+                        lineoff = res[SLINE] - symres[SLINE]
+                        return Location(sym, fid, eid, gen_offset(lineoff, res[2]))
             return EmptyLocation
         key = Key(resolve(res[SFILE], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
         if not key.src.sym or not key.dst.sym:
