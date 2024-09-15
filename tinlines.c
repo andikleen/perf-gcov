@@ -3,7 +3,10 @@ volatile int a = 10000, b = 100000, c;
 
 static void f2(void)
 {
-	c = a / b;
+	if (a % 2)
+		a++;
+	else
+		b++;
 }
 
 static void f1(void)
