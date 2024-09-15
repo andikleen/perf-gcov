@@ -11,6 +11,7 @@
 # check buildid
 # output multiple gcovs
 # support online mode
+# implement suffix elision policy for .
 # unit tests
 
 import os
