@@ -339,7 +339,6 @@ def get_fid(fn:str) -> int:
 def get_eid(fn:str) -> int:
     return get_id(stats.exenames, fn)
 
-# does not really work for mypy. have to use some constants to make it happy.
 SFILE: Final[int] = 0
 SLINE: Final[int] = 1
 SDISC: Final[int] = 2
