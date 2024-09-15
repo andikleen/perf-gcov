@@ -35,11 +35,11 @@ if ppath is None:
     data = "perf.data"
     if "--profile" in sys.argv:
         i = sys.argv.index("--profile")
-        del sys.argv[i]
-        data = sys.argv[i]
-        del sys.argv[i]
+        if i + 1 < len(sys.argv):
+            del sys.argv[i]
+            data = sys.argv[i]
+            del sys.argv[i]
     pargs = [perf, "script", "-i", data, sys.argv[0]] + sys.argv[1:]
-    print(pargs)
     sys.exit(subprocess.run(pargs).returncode)
 
 sys.path.append(ppath + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
@@ -58,7 +58,11 @@ ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, help="Print N top samples")
 ap.add_argument('--binary', action='append', help="Only use samples for binary specified as basename. Can be used multiple times.", default=[])
 ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
+ap.add_argument('--gcov_version', type=int, help="gcov version. Only 2 supported", default=2)
 args = ap.parse_args()
+
+if args.gcov_version != 2:
+    sys.exit("Only gcov version 2 is supported")
 
 def trace_begin():
     pass
