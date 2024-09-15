@@ -110,7 +110,7 @@ class Stats:
         self.functions : set[Function] = set()
         self.srcnames : dict[str, int] = dict()
         self.exenames : dict[str, int] = dict()
-        self.inlinestacks : dict[Location, list[Inline]] = dict()
+        self.inlinestacks : dict[Location, tuple[Inline]] = dict()
         self.inlinestrings : set[str] = set()
         self.next_id = 1
 
@@ -162,7 +162,6 @@ def find_sym_line(exe: str, sym: str) -> int:
         return sym_lines[exe][sym]
     if sym not in warned:
         print("cannot resolve line of symbol %s in %s" % (sym, exe))
-        print(sym_lines[exe])
         warned.add(sym)
     return 0
 
@@ -195,26 +194,31 @@ def wfunc_instance(f: BinaryIO,
     sbranches = sorted(all_branches, key=lambda x: x.src)
     num = 0
     hcount = 0
-    inlines = None
+    inlines = set()
     for src, branchit in groupby(sbranches, lambda x: x.src):
         branches = list(branchit)
-        count = sum((b.count for b in branches))
-        if count < args.threshold:
-            stats.ignored_branches += count
-            continue
+        new_inlines = set()
+        if branches[0].src in stats.inlinestacks:
+            new_inlines.add(stats.inlinestacks[branches[0].src])
         if branches[0].src.sym != func:
             stats.ignored_branches += count
             continue
-        if inlines is None:
-            if branches[0].src in stats.inlinestacks:
-                inlines = stats.inlinestacks[branches[0].src]
+        count = 0
+        for b in branches:
+            count += b.count
+            if b.dst in stats.inlinestacks:
+                new_inlines.add(stats.inlinestacks[b.dst])
+        if count < args.threshold:
+            stats.ignored_branches += count
+            continue
+        inlines.update(new_inlines)
         stats.total_branches += count
         hcount += count
         num += 1
     wcounter(f, hcount)
     w32(f, string_index[func])
     w32(f, num)
-    w32(f, sum((1 if i.offset else 0 for i in inlines)) if inlines else 0)
+    w32(f, len(inlines))
 
     for src, branchit in groupby(sbranches, lambda x: x.src):
         branches = list(branchit)
@@ -246,13 +250,14 @@ def wfunc_instance(f: BinaryIO,
 
     # dump inline stack
     if inlines:
-        for i in inlines:
-            if i.offset == 0:
-                continue
-            w32(f, i.offset)
-            w32(f, string_index[i.name])
-            w32(f, 0) # num pos counts
-            w32(f, 0) # call sites
+        print(inlines)
+        for inl in inlines:
+            print("inl", inl)
+            for i in inl:
+                w32(f, i.offset)
+                w32(f, string_index[i.name])
+                w32(f, 0) # num pos counts
+                w32(f, 0) # call sites
 
 def gen_strtable(stats: Stats):
     string_table = sorted(chain((x.name for x in stats.functions), stats.inlinestrings))
@@ -386,6 +391,7 @@ def process_event(param_dict):
                     s:str,
                     ip:int) -> Location:
             if args.binary and os.path.basename(res[3]) not in args.binary:
+                stats.ignored += 1
                 return EmptyLocation
             if "+" in s:
                 sym, ipoff = s.split("+")
@@ -407,16 +413,21 @@ def process_event(param_dict):
                             return EmptyLocation
                         lineoff = res[SLINE] - symres[SLINE]
                         return Location(sym, fid, eid, gen_offset(lineoff, res[2]))
+            if args.verbose:
+                print("Cannot resolve", res)
+            stats.errored += 1
             return EmptyLocation
 
         key = Key(resolve(res[SFILE], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
         if not key.src.sym or not key.dst.sym:
-            stats.errored += 1
             continue
         stats.branches[key] += 1
-        if res[0][SINLINE]:
-            ikey = key.src
+        # handle src too?
+        if res[1][SINLINE]:
+            ikey = key.dst
             if ikey not in stats.inlinestacks:
                 if args.verbose:
-                    print("inline", ikey)
-                stats.inlinestacks[ikey] = gen_inline(res[0][SEXE], res[0][SINLINE])
+                    print("inline", ikey, res[1][SINLINE])
+                istack = gen_inline(res[1][SEXE], res[1][SINLINE])
+                if istack != EmptyLocation:
+                    stats.inlinestacks[ikey] = tuple(istack)
