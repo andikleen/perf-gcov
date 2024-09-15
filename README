@@ -1,0 +1,18 @@
+perf based replacement for autofdo to generate profile feedback data for gcc's -fauto-profile option.
+
+Eventual goal is to support an online modus that supports contiguous profiling of the system
+and then rebuilding pieces with profile feedback.
+
+Requires a perf tool with the patches in
+https://git.kernel.org/pub/scm/linux/kernel/git/ak/linux-misc.git/log/?h=perf/brstack-resolve-1
+
+Synopsis:
+
+gcc -g -O2 -o workload ...
+perf record -b -c 100003 -e branches:upp workload
+gcov.py --binary workload --gcov file.gcov
+gcc -fauto-profile=file.gcov -o workload.opt -O2 -g ...
+
+Status:
+
+Should work for basic operations, but still various issues and needs more testing.
