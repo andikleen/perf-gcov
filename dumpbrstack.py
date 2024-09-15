@@ -11,6 +11,7 @@ from __future__ import print_function
 
 import os
 import sys
+import pprint
 
 sys.path.append(os.environ['PERF_EXEC_PATH'] + \
 	'/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
@@ -27,4 +28,4 @@ def trace_end():
 def process_event(param_dict):
     for br, bsym in zip(param_dict["brstack"], param_dict["brstacksym"]):
         res = perf_brstack_srcline(perf_script_context, br)
-        print(res)
+        pprint.pp(res)
