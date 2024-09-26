@@ -110,7 +110,7 @@ class Stats:
         self.functions : set[Function] = set()
         self.srcnames : dict[str, int] = dict()
         self.exenames : dict[str, int] = dict()
-        self.inlinestacks : dict[Location, tuple[Inline]] = dict()
+        self.inlinestacks : dict[Location, tuple[Inline, ...]] = dict()
         self.inlinestrings : set[str] = set()
         self.next_id = 1
 
@@ -201,7 +201,7 @@ def wfunc_instance(f: BinaryIO,
         if branches[0].src in stats.inlinestacks:
             new_inlines.add(stats.inlinestacks[branches[0].src])
         if branches[0].src.sym != func:
-            stats.ignored_branches += count
+            stats.ignored_branches += 1
             continue
         count = 0
         for b in branches:
