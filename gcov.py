@@ -218,7 +218,7 @@ def wfunc_instance(f: BinaryIO,
     wcounter(f, hcount)
     w32(f, string_index[func])
     w32(f, num)
-    w32(f, len(inlines))
+    w32(f, sum((len(x) for x in inlines)))
 
     for src, branchit in groupby(sbranches, lambda x: x.src):
         branches = list(branchit)
@@ -250,9 +250,7 @@ def wfunc_instance(f: BinaryIO,
 
     # dump inline stack
     if inlines:
-        print(inlines)
         for inl in inlines:
-            print("inl", inl)
             for i in inl:
                 w32(f, i.offset)
                 w32(f, string_index[i.name])
