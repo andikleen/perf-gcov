@@ -5,6 +5,9 @@
 # perf script gcov.py --binary workload file.gcov
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
+# the code is written in typed python using mypy,
+# please run make typecheck to verify after changes
+
 # open:
 # fix nesting
 # handle non unique symbols using dwarf (same file)

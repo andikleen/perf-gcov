@@ -1,0 +1,12 @@
+import backtrace
+import argparse
+
+ap = argparse.ArgumentParser()
+ap.add_argument('elffile', type=str)
+ap.add_argument('ip', type=str)
+args = ap.parse_args()
+
+state = backtrace.createstate(args.elffile)
+for j in backtrace.pcinfo(state, int(args.ip, 0)):
+    print("%x %s:%d %s %d" % j)
+

@@ -1,15 +1,23 @@
-#define BACKTRACE_DISC
+/* Python interface to libbacktrace's pcinfo function for an external
+   binary. Note that only non PIC/PIE programs are currently supported.  */
 #include <backtrace.h>
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Print error message MSG with ERRNUM, DATA is ignored.  */
 
 static void
 error_callback (void *data, const char *msg, int errnum)
 {
-  fprintf (stderr, "libbacktrace error: %s, %d\n", msg, errnum);
+  fprintf (stderr, "libbacktrace error: %s %d\n", msg, errnum);
 }
+
+/* Python createstate function. Python arguments is an elf FILENAME.
+   Returns state as a capsule.  */
 
 static PyObject *
 createstate (PyObject *self, PyObject *args)
@@ -30,6 +38,9 @@ createstate (PyObject *self, PyObject *args)
   return PyCapsule_New (state, "backtrace_state", NULL);
 }
 
+/* Callback to add a inline call location for
+   PC, FILENAME, LINENO, FUNCTION, DISC to the python list in DATA.  */
+
 static int
 add_inlines (void *data, uintptr_t pc, const char *filename,
 	    int lineno, const char *function, int disc)
@@ -37,10 +48,16 @@ add_inlines (void *data, uintptr_t pc, const char *filename,
   PyObject *list = (PyObject *) data;
   PyList_Append (list, Py_BuildValue ("Ksisi",
 				      (unsigned long long) pc,
-				      strdup (filename), lineno,
-				      strdup (function), disc));
+				      filename ? strdup (filename) : NULL,
+				      lineno,
+				      function ? strdup (function) : NULL,
+				      disc));
   return 0;
 }
+
+/* Python interface to libbacktrace's pcinfo. Python arguments are the
+   state (created by createstate) and the IP in the target ELF file.
+   Returns a list of tuples describing the inline stack.  */
 
 static PyObject *
 pcinfo (PyObject *self, PyObject *args)
@@ -56,8 +73,8 @@ pcinfo (PyObject *self, PyObject *args)
   state = PyCapsule_GetPointer (state_cap, "backtrace_state");
   if (!state)
     return NULL;
-  if (backtrace_pcinfo
-      (state, pc, add_inlines, error_callback, inline_list))
+  if (backtrace_pcinfo_disc (state, pc, add_inlines,
+			     error_callback, inline_list))
     {
       Py_DECREF (inline_list);
       return NULL;
@@ -67,9 +84,10 @@ pcinfo (PyObject *self, PyObject *args)
 
 static PyMethodDef backtrace_methods[] = {
   { "createstate", createstate, METH_VARARGS,
-   "Initialize state for ELF file FILENAME" },
+   "Initialize state for ELF file FILENAME." },
   { "pcinfo", pcinfo, METH_VARARGS,
-   "Generate inline stack for STATE at IP. Returns list of (...) tuples" },
+   "Generate inline stack for STATE at IP. "
+   "Returns list of (PC, filename, linenr, functionname, discriminator) tuples." },
   { }
 };
 
@@ -80,6 +98,8 @@ static struct PyModuleDef backtrace_module = {
   -1,
   backtrace_methods
 };
+
+/* Python initialization function.  */
 
 PyMODINIT_FUNC
 PyInit_backtrace (void)

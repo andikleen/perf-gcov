@@ -2,7 +2,7 @@
 # basic tester
 
 CC=${CC:-gcc}
-PERF=${PERF:-../perf}
+PERF=${PERF:-perf}
 
 set -x
 set -e
