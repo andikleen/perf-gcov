@@ -27,6 +27,7 @@ import argparse
 import os.path
 import subprocess
 import pathlib
+import backtrace
 
 ppath = os.getenv('PERF_EXEC_PATH')
 if ppath is None:
@@ -48,24 +49,29 @@ if ppath is None:
 sys.path.append(ppath + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
 try:
-    from perf_trace_context import perf_script_context, perf_brstack_srcline, perf_resolve_ip # type: ignore
+    from perf_trace_context import perf_script_context # type: ignore
 except ImportError:
-    sys.exit("Need perf version with perf_brstack_srcline support") # XXX add version
+    sys.exit("Cannot find perf python modules")
 
 ap = argparse.ArgumentParser()
 ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
+ap.add_argument('--binary', help="Generate gcov file for binary")
 ap.add_argument('--profile', '-i', help="Profile data. Default perf.data") # handled by perf
 ap.add_argument('--gcov', help="gcov output file")
 ap.add_argument('--threshold', default=10, help="Min number of samples for location to output")
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, help="Print N top samples")
-ap.add_argument('--binary', action='append', help="Only use samples for binary specified as basename. Can be used multiple times.", default=[])
 ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
 ap.add_argument('--gcov_version', type=int, help="gcov version. Only 2 supported", default=2)
 args = ap.parse_args()
 
 if args.gcov_version != 2:
     sys.exit("Only gcov version 2 is supported")
+if args.binary is None:
+    sys.exit("Need --binary")
+
+btstate = backtrace.createstate(args.binary)
+# XXX which exception to catch?
 
 def trace_begin():
     pass
@@ -382,11 +388,16 @@ def process_event(param_dict):
         if br["from_dsoname"] != br["to_dsoname"]:
             stats.crossed += 1
             continue
-        res = perf_brstack_srcline(perf_script_context, br)
+        if os.path.basename(br["from_dsoname"]) != os.path.basename(args.binary):
+            stats.ignored += 1
+            continue
+        res = (backtrace.pcinfo(btstate, br["from"]), backtrace.pcinfo(btstate, br["to"]))
         if res[0] is None or res[1] is None:
             stats.ignored += 1
             continue
 
+        # source_file_name, line_number, discriminator, executable, build-id, inline-stack for each entry of a brstack from the sample. Inline stack is a list of inlines with filename, line number, discriminator, symbolname for each entry.
+        # PC, FILENAME, LINENO, FUNCTION, DISC
         def resolve(res:tuple[str, int, int, str, str, tuple[tuple[str,int,int,str], ...]],
                     s:str,
                     ip:int) -> Location:
