@@ -393,24 +393,23 @@ def process_event(param_dict):
             continue
         res = (backtrace.pcinfo(btstate, br["from"]), backtrace.pcinfo(btstate, br["to"]))
         if res[0] is None or res[1] is None:
+            print("Ignored fail")
             stats.ignored += 1
             continue
 
         # source_file_name, line_number, discriminator, executable, build-id, inline-stack for each entry of a brstack from the sample. Inline stack is a list of inlines with filename, line number, discriminator, symbolname for each entry.
         # PC, FILENAME, LINENO, FUNCTION, DISC
-        def resolve(res:tuple[str, int, int, str, str, tuple[tuple[str,int,int,str], ...]],
+        def resolve(res:tuple[int, str, int, str, int],
                     s:str,
+                    exe:str,
                     ip:int) -> Location:
-            if args.binary and os.path.basename(res[3]) not in args.binary:
-                stats.ignored += 1
-                return EmptyLocation
             if "+" in s:
                 sym, ipoff = s.split("+")
                 symip = ip - int(ipoff, 16)
-                symres = perf_resolve_ip(perf_script_context, symip)
+                symres = backtrace.pcinfo(btstate, symip)
                 if symres:
-                    eid = get_eid(symres[SEXE])
-                    fid = get_fid(symres[SFILE])
+                    eid = get_eid(exe)
+                    fid = get_fid(symres[0])
                     key = Function(eid, fid, sym)
                     stats.functions.add(key)
                     if symres[SFILE] == res[SFILE]:
@@ -429,7 +428,14 @@ def process_event(param_dict):
             stats.errored += 1
             return EmptyLocation
 
-        key = Key(resolve(res[SFILE], bsym["from"], br["from"]), resolve(res[1], bsym["to"], br["to"]))
+        key = Key(resolve(res[0][0],
+                          bsym["from"],
+                          br["from_dsoname"],
+                          br["from"]),
+                  resolve(res[1][0],
+                          bsym["to"],
+                          br["to_dsoname"],
+                          br["to"]))
         if not key.src.sym or not key.dst.sym:
             continue
         stats.branches[key] += 1
