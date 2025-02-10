@@ -48,6 +48,28 @@ def fmt_offset(offset):
 
 f = args.gcovfile
 
+def dump_pos(num_pos, callsites):
+    for p in range(num_pos):
+        offset = r32(f)
+        num_targets = r32(f)
+        counter = rcounter(f)
+        print("  %s: %d" % (fmt_offset(offset), counter))
+        check_counter(counter)
+        for t in range(num_targets):
+            expect("topn hist type", r32(f), HIST_TYPE_INDIR_CALL_TOPN)
+            target = str_table[rcounter(f)]
+            count = rcounter(f)
+            print("    %s: %d" % (target, count))
+            check_counter(count)
+    for i in range(callsites):
+        offset = r32(f)
+        name = str_table[r32(f)]
+        num_pos = r32(f)
+        num_call = r32(f)
+        print("%s%s %s num_pos %d num_call %d" %
+              (" " * (i+3)*2, name, fmt_offset(offset), num_pos, num_call))
+        dump_pos(num_pos, num_call)
+
 expect("magic", r32(f), GCOV_DATA_MAGIC)
 warn_expect("version", r32(f), GCOV_VERSION)
 r32(f)
@@ -70,27 +92,6 @@ for i in range(num_funcs):
     check_counter(head)
     num_pos = r32(f)
     callsites = r32(f)
-    for p in range(num_pos):
-        offset = r32(f)
-        num_targets = r32(f)
-        counter = rcounter(f)
-        print("  %s: %d" % (fmt_offset(offset), counter))
-        check_counter(counter)
-        for t in range(num_targets):
-            expect("topn hist type", r32(f), HIST_TYPE_INDIR_CALL_TOPN)
-            target = str_table[rcounter(f)]
-            count = rcounter(f)
-            print("    %s: %d" % (target, count))
-            check_counter(count)
-    for i in range(callsites):
-        offset = r32(f)
-        name = str_table[r32(f)]
-        num_pos = r32(f)
-        num_call = r32(f)
-        print("%s%s %s num_pos %d num_call %d" %
-              (" " * (i+3)*2, name, fmt_offset(offset), num_pos, num_call))
-        if num_pos != 0:
-            sys.exit("expected nested num_pos to be 0")
-        if num_call != 0:
-            sys.exit("expected nested num_call to be 0")
+    dump_pos(num_pos, callsites)
+
 

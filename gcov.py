@@ -22,8 +22,9 @@ import sys
 from collections import Counter, defaultdict, namedtuple
 from itertools import groupby, chain
 import struct
-from typing import BinaryIO, NamedTuple, Final
+from typing import BinaryIO, NamedTuple, Final, Any
 import argparse
+import itertools
 import os.path
 import subprocess
 import pathlib
@@ -258,6 +259,7 @@ def wfunc_instance(f: BinaryIO,
                 wcounter(f, b.count)
 
     # dump inline stack
+    # wrong need recursive structure
     if inlines:
         for inl in inlines:
             for i in inl:
@@ -309,7 +311,7 @@ def trace_end():
         w32(f, 0) # length. ignored by gcc
         print("Writing %d functions" % len(stats.functions))
         w32(f, len(stats.functions))
-        for k in stats.functions:
+        for k in sorted(stats.functions, key=lambda x: x.name):
             wfunc_instance(f, func_table[k], string_index, k.name)
 
         if not pathlib.Path(f.name).is_fifo():
@@ -380,6 +382,16 @@ def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]
         return Inline(get_fid(x.file), x.sym, gen_offset(x.line - sl, x.disc))
     return [inline_tuple(PerfInline(x[0], x[1], x[2], x[3])) for x in il]
 
+# convert to original perf tuple format
+def getbt(ip:int) -> tuple[str, int, int, Any, Any, Any, tuple[str, int, int, str]] | None:
+    p = backtrace.pcinfo(btstate, ip)
+    #print("pcinfo %x" % ip, p)
+    if p is None:
+        return None
+    op = p[0]
+    istack = tuple(((x[1], x[2], x[4], x[3]) for x in itertools.takewhile(lambda x: x[0] == op[0], p[1:])))
+    return (op[1], op[2], op[4], None, None, istack)
+
 i2warned = set()
 
 def process_event(param_dict):
@@ -391,7 +403,7 @@ def process_event(param_dict):
         if os.path.basename(br["from_dsoname"]) != os.path.basename(args.binary):
             stats.ignored += 1
             continue
-        res = (backtrace.pcinfo(btstate, br["from"]), backtrace.pcinfo(btstate, br["to"]))
+        res = (getbt(br["from"]), getbt(br["to"]))
         if res[0] is None or res[1] is None:
             print("Ignored fail")
             stats.ignored += 1
@@ -406,8 +418,9 @@ def process_event(param_dict):
             if "+" in s:
                 sym, ipoff = s.split("+")
                 symip = ip - int(ipoff, 16)
-                symres = backtrace.pcinfo(btstate, symip)
+                symres = getbt(symip)
                 if symres:
+                    #print("symres",symres, "res", res, "ip %x" % ip, "symip %x" % symip)
                     eid = get_eid(exe)
                     fid = get_fid(symres[0])
                     key = Function(eid, fid, sym)
@@ -428,11 +441,11 @@ def process_event(param_dict):
             stats.errored += 1
             return EmptyLocation
 
-        key = Key(resolve(res[0][0],
+        key = Key(resolve(res[0],
                           bsym["from"],
                           br["from_dsoname"],
                           br["from"]),
-                  resolve(res[1][0],
+                  resolve(res[1],
                           bsym["to"],
                           br["to_dsoname"],
                           br["to"]))

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # basic tester
 
 CC=${CC:-gcc}
@@ -17,13 +17,21 @@ local i=$1
 $CC -g -O2 -o ${i} ${i}.c
 $PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
 $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i}
-./dump.py --max-count 100000 ${i}.gcov
-# dump_gcov ${i}.gcov
+./dump.py --max-count 1000000 ${i}.gcov
+if [ -n "$(type -p dump_gcov)" ] ; then
+	echo "autofdo dump"
+	dump_gcov ${i}.gcov
+	create_gcov -gcov_version 2 --binary ${i} --gcov ${i}.gcov2 --profile ${i}.data
+	./dump.py ${i}.gcov2
+	echo "autofdo reference dump"
+	dump_gcov ${i}.gcov2
+fi
 $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
 ./${i}.opt
 }
 
 test tcall
+test tdisc
 test tswitch
 test tgoto
 test tinlines
