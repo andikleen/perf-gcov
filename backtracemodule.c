@@ -39,19 +39,20 @@ createstate (PyObject *self, PyObject *args)
 }
 
 /* Callback to add a inline call location for
-   PC, FILENAME, LINENO, FUNCTION, DISC to the python list in DATA.  */
+   PC, FILENAME, LINENO, FUNCTION, EXTRA to the python list in DATA.  */
 
 static int
 add_inlines (void *data, uintptr_t pc, const char *filename,
-	    int lineno, const char *function, int disc)
+	    int lineno, const char *function, struct backtrace_extra *extra)
 {
   PyObject *list = (PyObject *) data;
-  PyList_Append (list, Py_BuildValue ("Ksisi",
+  PyList_Append (list, Py_BuildValue ("Ksisii",
 				      (unsigned long long) pc,
 				      filename ? strdup (filename) : NULL,
 				      lineno,
 				      function ? strdup (function) : NULL,
-				      disc));
+				      extra->disc,
+				      extra->decl_line));
   return 0;
 }
 
@@ -73,7 +74,7 @@ pcinfo (PyObject *self, PyObject *args)
   state = PyCapsule_GetPointer (state_cap, "backtrace_state");
   if (!state)
     return NULL;
-  if (backtrace_pcinfo_disc (state, pc, add_inlines,
+  if (backtrace_pcinfo_extra (state, pc, add_inlines,
 			     error_callback, inline_list))
     {
       Py_DECREF (inline_list);
@@ -87,7 +88,7 @@ static PyMethodDef backtrace_methods[] = {
    "Initialize state for ELF file FILENAME." },
   { "pcinfo", pcinfo, METH_VARARGS,
    "Generate inline stack for STATE at IP. "
-   "Returns list of (PC, filename, linenr, functionname, discriminator) tuples." },
+   "Returns list of (PC, filename, linenr, functionname, discriminator, decl_line) tuples." },
   { }
 };
 
