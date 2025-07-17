@@ -1,5 +1,5 @@
 # could use the python build system instead
-CONFIG := python3.11-config
+CONFIG := python3.13-config
 BACKTRACESRC := ~/gcc/git/gcc/libbacktrace
 BACKTRACELIB := ~/gcc/git/obj-quick/libbacktrace/.libs/libbacktrace.a
 
