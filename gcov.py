@@ -105,7 +105,8 @@ Inline = NamedTuple('Inline', [('fileid', int),
 PerfInline = NamedTuple('PerfInline', [('file', str),
                                        ('line', int),
                                        ('disc', int),
-                                       ('sym', str)])
+                                       ('sym', str),
+                                       ('declline', int)])
 
 class Stats:
     def __init__(self):
@@ -355,32 +356,27 @@ SEXE: Final[int] = 3
 SBUILDID: Final[int] = 4
 SINLINE: Final[int] = 5
 
-def ifmtres(x:PerfInline):
-    return "%s at %s:%d:%d" % (x.sym, x.file, x.line, x.disc)
+IPC: Final[int] = 0
+IFILENAME: Final[int] = 1
+ILINENO: Final[int] = 2
+IFUNCTION: Final[int] = 3
+IDISC: Final[int] = 4
+IDECLLINE: Final[int] = 5
 
-def ifmtrest(x:tuple[str,int,int,str]):
-    return ifmtres(PerfInline(x[0], x[1], x[2], x[3]))
+def ifmtres(x:PerfInline):
+    return "%s at %s:%d[%d]:%d" % (x.sym, x.file, x.line, x.declline, x.disc)
+
+def ifmtrest(x:tuple[str,int,int,str,int]):
+    return ifmtres(PerfInline(x[IPC], x[IFILENAME], x[ILINENO], x[IDISC], x[IDECLLINE]))
 
 iwarned = set()
 
-def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]:
+def gen_inline(exe: str, il: tuple[tuple[str,int,int,str,int,int], ...]) -> list[Inline]:
     def inline_tuple(x : PerfInline) -> Inline:
-        sl = find_sym_line(exe, x.sym)
-        if sl == 0 or sl > x.line:
-            if args.verbose and x not in iwarned:
-                if sl == 0:
-                    print("Cannot resolve inline %s" % (ifmtres(x)))
-                if sl > x.line:
-                    print("inline line %d for %s beyond line %d for inline stack %s" % (
-                        sl,
-                        x.sym,
-                        x.line,
-                        x))
-                iwarned.add(x)
-            return Inline(0, "", 0)
         stats.inlinestrings.add(x.sym)
-        return Inline(get_fid(x.file), x.sym, gen_offset(x.line - sl, x.disc))
-    return [inline_tuple(PerfInline(x[0], x[1], x[2], x[3])) for x in il]
+        return Inline(get_fid(x.file), x.sym, gen_offset(x.line - x.decl_line, x.disc))
+    return [inline_tuple(PerfInline(x[IPC], x[IFILENAME], x[ILINENO], x[IDISC], x[IFUNCTION], x[IDECLLINE]))
+            for x in il]
 
 # convert to original perf tuple format
 def getbt(ip:int) -> tuple[str, int, int, Any, Any, Any, tuple[str, int, int, str]] | None:
@@ -410,7 +406,7 @@ def process_event(param_dict):
             continue
 
         # source_file_name, line_number, discriminator, executable, build-id, inline-stack for each entry of a brstack from the sample. Inline stack is a list of inlines with filename, line number, discriminator, symbolname for each entry.
-        # PC, FILENAME, LINENO, FUNCTION, DISC
+        # PC, FILENAME, LINENO, FUNCTION, DISC, DECLLINE
         def resolve(res:tuple[int, str, int, str, int],
                     s:str,
                     exe:str,
