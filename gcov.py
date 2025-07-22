@@ -126,55 +126,6 @@ class Stats:
         self.next_id = 1
 
 stats = Stats()
-dwarned = set()
-
-# to generate inline relative offsets need the abstract origin of the inlines
-# this requires reading the .debug_info because perf doesn't know it because the
-# libraries/programs it uses don't supply
-# XXX doesn't handle functions with non unique names correctly
-def read_sym_lines(exe: str) -> dict[str, int] :
-    with subprocess.Popen(["objdump", "-e", exe, "-Wi"], stdout=subprocess.PIPE, universal_newlines=True) as p:
-        d = {}
-        seen = 0
-        name = ""
-        line = 0
-        assert p.stdout is not None
-        for l in p.stdout:
-            n = l.split()
-            if len(n) < 4:
-                continue
-            if n[1] == "Abbrev":
-                seen = 0
-                if len(n) >= 5 and n[4] == "(DW_TAG_subprogram)":
-                    seen = 1
-            if n[1] == "DW_AT_name" and seen == 1:
-                name = n[3]
-                if name == "(indirect":
-                    name = n[7]
-                seen += 1
-            if n[1] == "DW_AT_decl_line" and seen == 2:
-                if name in d and name not in dwarned:
-                    print("duplicated symbol %s may be mishandled" % name)
-                    dwarned.add(name)
-                line = int(n[3])
-                d[name] = line
-                if args.dump_dwarf:
-                    print("dwarf", name, line)
-                seen = 0
-        return d
-
-sym_lines : dict[str, dict[str, int]] = {}
-warned : set[str] = set()
-
-def find_sym_line(exe: str, sym: str) -> int:
-    if exe not in sym_lines:
-        sym_lines[exe] = read_sym_lines(exe)
-    if sym in sym_lines[exe]:
-        return sym_lines[exe][sym]
-    if sym not in warned:
-        print("cannot resolve line of symbol %s in %s" % (sym, exe))
-        warned.add(sym)
-    return 0
 
 def w32(f: BinaryIO, v: int):
     try:
@@ -364,12 +315,11 @@ IDISC: Final[int] = 4
 IDECLLINE: Final[int] = 5
 
 def ifmtres(x:PerfInline):
+    print(x)
     return "%s at %s:%d[%d]:%d" % (x.sym, x.file, x.line, x.declline, x.disc)
 
 def ifmtrest(x:tuple[str,int,int,str,int]):
     return ifmtres(PerfInline(x[IPC], x[IFILENAME], x[ILINENO], x[IDISC], x[IDECLLINE]))
-
-iwarned = set()
 
 def gen_inline(exe: str, il: tuple[tuple[str,int,int,str,int,int], ...]) -> list[Inline]:
     def inline_tuple(x : PerfInline) -> Inline:
@@ -424,10 +374,11 @@ def process_event(param_dict):
                     if symres[SFILE] == res[SFILE]:
                         if res[SLINE] < symres[SLINE]:
                             if args.verbose and (symres, res) not in i2warned:
+                                print(res)
                                 print("symbol %s %s sample %s has negative line offset" % (
                                     sym,
                                     ifmtrest(symres),
-                                    ifmtres(PerfInline(res[0], res[1], res[2], sym))))
+                                    ifmtres(res)))
                                 i2warned.add((symres, res))
                             return EmptyLocation
                         lineoff = res[SLINE] - symres[SLINE]
