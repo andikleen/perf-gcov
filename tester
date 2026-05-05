@@ -22,9 +22,9 @@ if [ -n "$(type -p dump_gcov)" ] ; then
 	echo "autofdo dump"
 	dump_gcov ${i}.gcov
 	create_gcov -gcov_version 2 --binary ${i} --gcov ${i}.gcov2 --profile ${i}.data
-	./dump.py ${i}.gcov2
 	echo "autofdo reference dump"
 	dump_gcov ${i}.gcov2
+	./dump.py ${i}.gcov2
 fi
 $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
 ./${i}.opt
