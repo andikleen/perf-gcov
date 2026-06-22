@@ -9,7 +9,6 @@
 # please run make typecheck to verify after changes
 
 # open:
-# fix nesting
 # handle non unique symbols using dwarf (same file)
 # check buildid
 # output multiple gcovs
@@ -58,9 +57,9 @@ ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file
 ap.add_argument('--binary', help="Generate gcov file for binary")
 ap.add_argument('--profile', '-i', help="Profile data. Default perf.data") # handled by perf
 ap.add_argument('--gcov', help="gcov output file")
-ap.add_argument('--threshold', default=10, help="Min number of samples for location to output")
+ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
-ap.add_argument('--top', default=0, help="Print N top samples")
+ap.add_argument('--top', default=0, type=int, help="Print N top samples")
 ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
 ap.add_argument('--gcov_version', type=int, help="gcov version. Only 2 supported", default=2)
 args = ap.parse_args()
@@ -99,6 +98,7 @@ class Stats:
         self.total = 0
         self.ignored_branches = 0
         self.total_branches = 0
+        self.output_branches = 0
         # outermost function name -> profile tree root
         self.tree : dict[str, "FuncNode"] = dict()
 
@@ -159,7 +159,8 @@ class FuncNode:
     def head_count(self) -> int:
         # Entry/head count of a function instance is the maximum sample
         # count seen, matching how an entry block dominates the body.
-        c = max(self.positions.values(), default=0)
+        c = max((count for count in self.positions.values()
+                 if count >= args.threshold), default=0)
         for child in self.children.values():
             c = max(c, child.head_count())
         return c
@@ -181,11 +182,30 @@ def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
         node.targets[offset][target] += count
 
 
+def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[str]]]:
+    positions = []
+    for off in sorted(node.positions):
+        count = node.positions[off]
+        if count < args.threshold:
+            continue
+        targets = Counter({name: target_count
+                           for name, target_count in node.targets.get(off, Counter()).items()
+                           if target_count >= args.threshold})
+        positions.append((off, count, targets))
+    return positions
+
+
+def emitted_children(node: FuncNode) -> list[tuple[int, str, FuncNode]]:
+    return [(coff, cname, child)
+            for (coff, cname), child in sorted(node.children.items())
+            if child.head_count() > 0]
+
+
 def collect_strings(node: FuncNode, out: set[str]) -> None:
     out.add(node.name)
-    for targets in node.targets.values():
+    for _, _, targets in filtered_positions(node):
         out.update(targets.keys())
-    for child in node.children.values():
+    for _, _, child in emitted_children(node):
         collect_strings(child, out)
 
 
@@ -197,23 +217,23 @@ def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
     else:
         w32(f, offset)
         w32(f, string_index[node.name])
-    # number of positions and number of inlined callees
-    w32(f, len(node.positions))
-    w32(f, len(node.children))
+    positions = filtered_positions(node)
+    children = emitted_children(node)
 
-    for off in sorted(node.positions):
-        count = node.positions[off]
-        targets = node.targets.get(off, Counter())
+    # number of positions and number of inlined callees
+    w32(f, len(positions))
+    w32(f, len(children))
+
+    for off, count, targets in positions:
         w32(f, off)
         w32(f, len(targets))
         wcounter(f, count)
-        stats.total_branches += count
         for tname, tcount in targets.most_common():
             w32(f, HIST_TYPE_INDIR_CALL_TOPN)
             wcounter(f, string_index[tname])
             wcounter(f, tcount)
 
-    for (coff, _), child in sorted(node.children.items()):
+    for coff, _, child in children:
         wfunc_node(f, child, coff, string_index, False)
 
 
@@ -229,8 +249,16 @@ def trace_end():
     print("%d total, %d ignored, %d errored, %d crossed" %
           (stats.total, stats.ignored, stats.errored, stats.crossed))
 
+    if args.top > 0:
+        entries: list[tuple[str, int]] = []
+        for name, node in stats.tree.items():
+            collect_top(entries, name, node)
+        for path, count in sorted(entries, key=lambda x: x[1], reverse=True)[:args.top]:
+            print(path, "\t", count, "%.2f" % (float(count) / stats.total * 100. if stats.total else 0.0))
+
     # XXX multiple output files
     string_table, string_index = gen_strtable(stats)
+    update_branch_counts(stats)
 
     with open(args.gcov if args.gcov else args.output, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
@@ -269,9 +297,36 @@ def trace_end():
         w32(f, 4)
         w32(f, 0)
 
-    print("%d processed branches, %.2f%% ignored" %
+    print("%d processed branches, %d output branches, %.2f%% ignored" %
           (stats.total_branches,
+           stats.output_branches,
            (float(stats.ignored_branches) / stats.total_branches * 100. if stats.total_branches else 0.0)))
+
+
+def collect_top(entries: list[tuple[str, int]], prefix: str, node: FuncNode) -> None:
+    for off, count in node.positions.items():
+        entries.append(("%s:%d" % (prefix, off), count))
+    for (coff, cname), child in node.children.items():
+        collect_top(entries, "%s/%s@%d" % (prefix, cname, coff), child)
+
+
+def update_branch_counts(stats: Stats) -> None:
+    stats.total_branches = 0
+    stats.ignored_branches = 0
+    stats.output_branches = 0
+    for node in stats.tree.values():
+        update_node_branch_counts(node)
+
+
+def update_node_branch_counts(node: FuncNode) -> None:
+    for count in node.positions.values():
+        stats.total_branches += count
+        if count < args.threshold:
+            stats.ignored_branches += count
+        else:
+            stats.output_branches += count
+    for child in node.children.values():
+        update_node_branch_counts(child)
 
 # Return the inline/frame stack for IP as a list of Frame, ordered from the
 # outermost (real, symbol-table) function down to the innermost inlined
@@ -358,6 +413,6 @@ def process_event(param_dict):
         target = None
         if is_call:
             target = droot_name if len(dframes) == 1 else (dinner.sym if dinner.sym else droot_name)
+            if not target:
+                target = None
         add_path(stats.root(sroot_name), path, leaf_off, 1, target)
-
-
