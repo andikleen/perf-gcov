@@ -19,3 +19,5 @@ clean:
 typecheck:
 	mypy gcov.py dump.py --check-untyped-defs
 
+test:
+	./tester
