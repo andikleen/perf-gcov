@@ -148,11 +148,11 @@ def gen_offset(line: int, disc: int) -> int:
 
 def valid_call(b: Branch, func: str) -> bool:
     return b.count >= args.threshold and b.src.sym != b.dst.sym and b.src.sym == func
-
 def wfunc_instance(f: BinaryIO,
                    all_branches: list[Branch],
                    string_index: dict[str, int],
-                   func: str) -> None:
+                   func: str,
+                   visited_inlines: set) -> None:
     sbranches = sorted(all_branches, key=lambda x: x.src)
     num = 0
     hcount = 0
@@ -180,7 +180,10 @@ def wfunc_instance(f: BinaryIO,
     wcounter(f, hcount)
     w32(f, string_index[func])
     w32(f, num)
-    w32(f, sum((len(x) for x in inlines)))
+    #
+    # Number of records for inlined functions.
+    #
+    w32(f, len(inlines))
 
     for src, branchit in groupby(sbranches, lambda x: x.src):
         branches = list(branchit)
@@ -211,14 +214,17 @@ def wfunc_instance(f: BinaryIO,
                 wcounter(f, b.count)
 
     # dump inline stack
-    # wrong need recursive structure
     if inlines:
         for inl in inlines:
-            for i in inl:
-                w32(f, i.offset)
-                w32(f, string_index[i.name])
-                w32(f, 0) # num pos counts
-                w32(f, 0) # call sites
+            if inl in visited_inlines:
+                continue
+            # It is a call, not an inline. This can happen if the compiler
+            # decides not to inline a function.
+            if not inl:
+                continue
+            visited_inlines.add(inl)
+            wfunc_instance(f, all_branches, string_index, inl[0].name, visited_inlines)
+
 
 def gen_strtable(stats: Stats):
     string_table = sorted(chain((x.name for x in stats.functions), stats.inlinestrings))
@@ -264,7 +270,7 @@ def trace_end():
         print("Writing %d functions" % len(stats.functions))
         w32(f, len(stats.functions))
         for k in sorted(stats.functions, key=lambda x: x.name):
-            wfunc_instance(f, func_table[k], string_index, k.name)
+            wfunc_instance(f, func_table[k], string_index, k.name, set())
 
         if not pathlib.Path(f.name).is_fifo():
             endoff = f.tell()
@@ -316,7 +322,7 @@ IDECLLINE: Final[int] = 5
 
 def ifmtres(x:PerfInline):
     print(x)
-    return "%s at %s:%d[%d]:%d" % (x.sym, x.file, x.line, x.declline, x.disc)
+    return "%s at %s:%d[%d]:%d" % (x.sym, x.file, x.line, x.declline if isinstance(x.declline, int) else 0, x.disc)
 
 def ifmtrest(x:tuple[str,int,int,str,int]):
     return ifmtres(PerfInline(x[IPC], x[IFILENAME], x[ILINENO], x[IDISC], x[IDECLLINE]))
@@ -378,7 +384,7 @@ def process_event(param_dict):
                                 print("symbol %s %s sample %s has negative line offset" % (
                                     sym,
                                     ifmtrest(symres),
-                                    ifmtres(res)))
+                                     ifmtrest(res)))
                                 i2warned.add((symres, res))
                             return EmptyLocation
                         lineoff = res[SLINE] - symres[SLINE]
