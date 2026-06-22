@@ -20,11 +20,17 @@ $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i}
 ./dump.py --max-count 1000000 ${i}.gcov
 if [ -n "$(type -p dump_gcov)" ] ; then
 	echo "autofdo dump"
-	dump_gcov ${i}.gcov
+	dump_gcov ${i}.gcov > ${i}.dump
+	cat ${i}.dump
 	create_gcov -gcov_version 2 --binary ${i} --gcov ${i}.gcov2 --profile ${i}.data
-	./dump.py ${i}.gcov2
 	echo "autofdo reference dump"
-	dump_gcov ${i}.gcov2
+	dump_gcov ${i}.gcov2 > ${i}.dump2
+	cat ${i}.dump2
+	# gcov.py is branch/LBR based while create_gcov is sample+range based,
+	# so head counts and the set of body positions differ by design. The
+	# diff is informational only; line offsets should however line up.
+	echo "diff gcov.py vs create_gcov (informational)"
+	diff -u ${i}.dump ${i}.dump2 || true
 fi
 $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
 ./${i}.opt

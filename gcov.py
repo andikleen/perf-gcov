@@ -312,37 +312,44 @@ SDISC: Final[int] = 2
 SEXE: Final[int] = 3
 SBUILDID: Final[int] = 4
 SINLINE: Final[int] = 5
+SDECLLINE: Final[int] = 6
 
-IPC: Final[int] = 0
-IFILENAME: Final[int] = 1
-ILINENO: Final[int] = 2
+# indices into an inline-stack entry: (filename, lineno, discriminator,
+# function, decl_line)
+IFILENAME: Final[int] = 0
+ILINENO: Final[int] = 1
+IDISC: Final[int] = 2
 IFUNCTION: Final[int] = 3
-IDISC: Final[int] = 4
-IDECLLINE: Final[int] = 5
+IDECLLINE: Final[int] = 4
 
 def ifmtres(x:PerfInline):
     print(x)
     return "%s at %s:%d[%d]:%d" % (x.sym, x.file, x.line, x.declline if isinstance(x.declline, int) else 0, x.disc)
 
-def ifmtrest(x:tuple[str,int,int,str,int]):
-    return ifmtres(PerfInline(x[IPC], x[IFILENAME], x[ILINENO], x[IDISC], x[IDECLLINE]))
+def ifmtrest(x:tuple[Any, ...]):
+    # format a getbt() tuple (file, line, disc, exe, buildid, inline, decl_line)
+    return ifmtres(PerfInline(x[SFILE], x[SLINE], x[SDISC], "", x[SDECLLINE]))
 
-def gen_inline(exe: str, il: tuple[tuple[str,int,int,str,int,int], ...]) -> list[Inline]:
+def gen_inline(exe: Any, il: Any) -> list[Inline]:
     def inline_tuple(x : PerfInline) -> Inline:
         stats.inlinestrings.add(x.sym)
-        return Inline(get_fid(x.file), x.sym, gen_offset(x.line - x.decl_line, x.disc))
-    return [inline_tuple(PerfInline(x[IPC], x[IFILENAME], x[ILINENO], x[IDISC], x[IFUNCTION], x[IDECLLINE]))
+        return Inline(get_fid(x.file), x.sym, gen_offset(x.line - x.declline, x.disc))
+    return [inline_tuple(PerfInline(x[IFILENAME], x[ILINENO], x[IDISC], x[IFUNCTION], x[IDECLLINE]))
             for x in il]
 
 # convert to original perf tuple format
-def getbt(ip:int) -> tuple[str, int, int, Any, Any, Any, tuple[str, int, int, str]] | None:
+# pcinfo returns tuples of (PC, filename, lineno, function, discriminator, decl_line)
+# The returned tuple is indexed by the SFILE..SDECLLINE constants below.
+def getbt(ip:int) -> tuple[str, int, int, Any, Any, Any, int] | None:
     p = backtrace.pcinfo(btstate, ip)
     #print("pcinfo %x" % ip, p)
     if p is None:
         return None
     op = p[0]
-    istack = tuple(((x[1], x[2], x[4], x[3]) for x in itertools.takewhile(lambda x: x[0] == op[0], p[1:])))
-    return (op[1], op[2], op[4], None, None, istack)
+    # inline stack entries keep the full pcinfo layout
+    # (filename, lineno, discriminator, function, decl_line)
+    istack = tuple(((x[1], x[2], x[4], x[3], x[5]) for x in itertools.takewhile(lambda x: x[0] == op[0], p[1:])))
+    return (op[1], op[2], op[4], None, None, istack, op[5])
 
 i2warned = set()
 
@@ -361,9 +368,8 @@ def process_event(param_dict):
             stats.ignored += 1
             continue
 
-        # source_file_name, line_number, discriminator, executable, build-id, inline-stack for each entry of a brstack from the sample. Inline stack is a list of inlines with filename, line number, discriminator, symbolname for each entry.
-        # PC, FILENAME, LINENO, FUNCTION, DISC, DECLLINE
-        def resolve(res:tuple[int, str, int, str, int],
+        # source_file_name, line_number, discriminator, executable, build-id, inline-stack, decl_line for each entry of a brstack from the sample. Inline stack is a list of inlines with filename, line number, discriminator, symbolname, decl_line for each entry.
+        def resolve(res:tuple[Any, ...],
                     s:str,
                     exe:str,
                     ip:int) -> Location:
@@ -378,7 +384,11 @@ def process_event(param_dict):
                     key = Function(eid, fid, sym)
                     stats.functions.add(key)
                     if symres[SFILE] == res[SFILE]:
-                        if res[SLINE] < symres[SLINE]:
+                        # offsets are relative to the function declaration
+                        # line (DW_AT_decl_line), matching gcc/autofdo. Fall
+                        # back to the symbol's first line if unavailable.
+                        baseline = symres[SDECLLINE] if symres[SDECLLINE] else symres[SLINE]
+                        if res[SLINE] < baseline:
                             if args.verbose and (symres, res) not in i2warned:
                                 print(res)
                                 print("symbol %s %s sample %s has negative line offset" % (
@@ -387,8 +397,8 @@ def process_event(param_dict):
                                      ifmtrest(res)))
                                 i2warned.add((symres, res))
                             return EmptyLocation
-                        lineoff = res[SLINE] - symres[SLINE]
-                        return Location(sym, fid, eid, gen_offset(lineoff, res[2]))
+                        lineoff = res[SLINE] - baseline
+                        return Location(sym, fid, eid, gen_offset(lineoff, res[SDISC]))
             if args.verbose:
                 print("Cannot resolve", res)
             stats.errored += 1
