@@ -85,10 +85,10 @@ GCOV_VERSION = 2
 HIST_TYPE_INDIR_CALL_TOPN = 7
 
 # One frame of an inline stack as returned by libbacktrace pcinfo.
-Frame = NamedTuple('Frame', [('file', str),
+Frame = NamedTuple('Frame', [('file', str | None),
                              ('line', int),
                              ('disc', int),
-                             ('sym', str),
+                             ('sym', str | None),
                              ('declline', int)])
 
 class Stats:
@@ -300,7 +300,7 @@ def frame_offset(fr: Frame) -> int:
         line = 0
     return gen_offset(line, fr.disc)
 
-def sym_name(bsym: str, frame_sym: Any) -> str:
+def sym_name(bsym: str, frame_sym: str | None) -> str:
     # prefer the symbol-table name from perf; fall back to the frame's
     # function name from debug info.
     if bsym and "+" in bsym:
@@ -341,8 +341,13 @@ def process_event(param_dict):
         # outermost frame is the root function; each deeper frame is an
         # inlined callee reached at the *caller* frame's call offset. The
         # innermost frame holds the branch position.
-        names = [sroot_name] + [fr.sym for fr in sframes[1:]]
-        if any(not n for n in names):
+        names: list[str] = [sroot_name]
+        for fr in sframes[1:]:
+            if not fr.sym:
+                break
+            names.append(fr.sym)
+        if len(names) != len(sframes):
+            # an inlined frame had no resolvable name; skip this branch
             continue
         # callsite path: (callee name, call offset in caller) pairs
         path: list[tuple[str, int]] = []
