@@ -46,7 +46,7 @@ add_inlines (void *data, uintptr_t pc, const char *filename,
 	    int lineno, const char *function, struct backtrace_extra *extra)
 {
   PyObject *list = (PyObject *) data;
-  PyList_Append (list, Py_BuildValue ("Ksisii",
+  PyList_Insert (list, 0, Py_BuildValue ("Ksisii",
 				      (unsigned long long) pc,
 				      filename ? strdup (filename) : NULL,
 				      lineno,

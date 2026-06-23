@@ -60,10 +60,11 @@ ap.add_argument('--binary', help="Generate gcov file for binary")
 ap.add_argument('--profile', '-i', help="Profile data. Default perf.data") # handled by perf
 ap.add_argument('--gcov', help="gcov output file")
 ap.add_argument('--threshold', default=10, help="Min number of samples for location to output")
-ap.add_argument('--verbose', action='store_true', help="Print every sample")
+ap.add_argument('--verbose', action='store_true', help="Be verbose")
 ap.add_argument('--top', default=0, help="Print N top samples")
 ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
 ap.add_argument('--gcov_version', type=int, help="gcov version. Only 2 supported", default=2)
+ap.add_argument('--samples', action='store_true', help="print samples")
 args = ap.parse_args()
 
 if args.gcov_version != 2:
@@ -259,14 +260,14 @@ def wfunc_instance(f: BinaryIO,
                 wcounter(f, b.count)
 
     # dump inline stack
-    # wrong need recursive structure
     if inlines:
         for inl in inlines:
-            for i in inl:
+            for num, i in enumerate(inl):
                 w32(f, i.offset)
                 w32(f, string_index[i.name])
                 w32(f, 0) # num pos counts
-                w32(f, 0) # call sites
+                if num < len(inl) - 1:
+                    w32(f, 1) # call sites
 
 def gen_strtable(stats: Stats):
     string_table = sorted(chain((x.name for x in stats.functions), stats.inlinestrings))
@@ -365,6 +366,9 @@ iwarned = set()
 
 def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]:
     def inline_tuple(x : PerfInline) -> Inline:
+        if x.sym is None or exe is None:
+            print("No symbol or exe", x.sym, exe)
+            return Inline(0, "", 0)
         sl = find_sym_line(exe, x.sym)
         if sl == 0 or sl > x.line:
             if args.verbose and x not in iwarned:
@@ -385,12 +389,14 @@ def gen_inline(exe: str, il: tuple[tuple[str,int,int,str], ...]) -> list[Inline]
 # convert to original perf tuple format
 def getbt(ip:int) -> tuple[str, int, int, Any, Any, Any, tuple[str, int, int, str]] | None:
     p = backtrace.pcinfo(btstate, ip)
-    #print("pcinfo %x" % ip, p)
+    print("pcinfo %x" % ip, p)
     if p is None:
         return None
     op = p[0]
     istack = tuple(((x[1], x[2], x[4], x[3]) for x in itertools.takewhile(lambda x: x[0] == op[0], p[1:])))
-    return (op[1], op[2], op[4], None, None, istack)
+    r = (op[1], op[2], op[4], None, None, istack)
+    print(r)
+    return r
 
 i2warned = set()
 
@@ -409,7 +415,8 @@ def process_event(param_dict):
             stats.ignored += 1
             continue
 
-        # source_file_name, line_number, discriminator, executable, build-id, inline-stack for each entry of a brstack from the sample. Inline stack is a list of inlines with filename, line number, discriminator, symbolname for each entry.
+        # source_file_name, line_number, discriminator, executable, build-id, inline-stack for each entry of a brstack from the sample.
+        # Inline stack is a list of inlines with filename, line number, discriminator, symbolname for each entry.
         # PC, FILENAME, LINENO, FUNCTION, DISC
         def resolve(res:tuple[int, str, int, str, int],
                     s:str,
@@ -420,7 +427,8 @@ def process_event(param_dict):
                 symip = ip - int(ipoff, 16)
                 symres = getbt(symip)
                 if symres:
-                    #print("symres",symres, "res", res, "ip %x" % ip, "symip %x" % symip)
+                    if args.samples:
+                        print("symres",symres, "res", res, "ip %x" % ip, "symip %x" % symip)
                     eid = get_eid(exe)
                     fid = get_fid(symres[0])
                     key = Function(eid, fid, sym)
