@@ -2,7 +2,7 @@
 # generate gcc gcov autofdo files from perf record -b
 # gcc -O2 -o workload ...
 # perf record -b -c 100003 -e branches:upp workload
-# perf script gcov.py --binary workload file.gcov
+# gcov.py --binary workload file.gcov
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 
 # the code is written in typed python using mypy,
