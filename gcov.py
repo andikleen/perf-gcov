@@ -165,7 +165,6 @@ class FuncNode:
             c = max(c, child.head_count())
         return c
 
-
 def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
              count: int, target: str | None) -> None:
     """Accumulate COUNT into the tree.
@@ -181,7 +180,6 @@ def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
     if target is not None:
         node.targets[offset][target] += count
 
-
 def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[str]]]:
     positions = []
     for off in sorted(node.positions):
@@ -194,12 +192,10 @@ def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[str]]]:
         positions.append((off, count, targets))
     return positions
 
-
 def emitted_children(node: FuncNode) -> list[tuple[int, str, FuncNode]]:
     return [(coff, cname, child)
             for (coff, cname), child in sorted(node.children.items())
             if child.head_count() > 0]
-
 
 def collect_strings(node: FuncNode, out: set[str]) -> None:
     out.add(node.name)
@@ -207,7 +203,6 @@ def collect_strings(node: FuncNode, out: set[str]) -> None:
         out.update(targets.keys())
     for _, _, child in emitted_children(node):
         collect_strings(child, out)
-
 
 def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
                string_index: dict[str, int], toplevel: bool) -> None:
@@ -235,7 +230,6 @@ def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
 
     for coff, _, child in children:
         wfunc_node(f, child, coff, string_index, False)
-
 
 def gen_strtable(stats: Stats):
     strings: set[str] = set()
@@ -302,13 +296,11 @@ def trace_end():
            stats.output_branches,
            (float(stats.ignored_branches) / stats.total_branches * 100. if stats.total_branches else 0.0)))
 
-
 def collect_top(entries: list[tuple[str, int]], prefix: str, node: FuncNode) -> None:
     for off, count in node.positions.items():
         entries.append(("%s:%d" % (prefix, off), count))
     for (coff, cname), child in node.children.items():
         collect_top(entries, "%s/%s@%d" % (prefix, cname, coff), child)
-
 
 def update_branch_counts(stats: Stats) -> None:
     stats.total_branches = 0
@@ -316,7 +308,6 @@ def update_branch_counts(stats: Stats) -> None:
     stats.output_branches = 0
     for node in stats.tree.values():
         update_node_branch_counts(node)
-
 
 def update_node_branch_counts(node: FuncNode) -> None:
     for count in node.positions.values():
