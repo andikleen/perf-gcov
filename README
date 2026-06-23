@@ -3,21 +3,8 @@ perf based replacement for autofdo to generate profile feedback data for gcc's -
 Eventual goal is to support an online modus that supports contiguous profiling of the system
 and then rebuilding pieces with profile feedback.
 
-Requires a gcc patched with https://github.com/andikleen/gcc libbacktrace-disc-* patches
-
-Build libbacktrace with above branch if needed:
-git checkout -b libbacktrace-disc-6 https://github.com/andikleen/gcc gcc-lb  # or latest branch
-mkdir obj
-cd obj
-../gcc-lb/configure --enable-languages=c,c++
-cd libbacktrace
-make -j $(nproc)
-
-To build perf-gcov:
-git checkout https://github.com/andikleen/perf-gcov
-cd perf-gcov
-copy gcc-objdir/libbacktrace/.libs/libbacktrace.a to gcov build directory
-make
+Requires a perf tool with the patches in
+https://git.kernel.org/pub/scm/linux/kernel/git/ak/linux-misc.git/log/?h=perf/brstack-resolve-1
 
 Synopsis:
 
@@ -26,14 +13,6 @@ perf record -b -c 100003 -e branches:upp workload
 gcov.py --binary workload --gcov file.gcov
 gcc -fauto-profile=file.gcov -o workload.opt -O2 -g ...
 
-Testing:
-
-(if autofdo is installed will print reference output, otherwise runs on its own)
-
-./tester
-
 Status:
 
-Needs fixes
-
-Update to new proposed gcc gcov format?
+Should work for basic operations, but still various issues and needs more testing.
