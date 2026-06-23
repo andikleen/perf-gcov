@@ -492,6 +492,14 @@ def add_dwarf_zero_scaffolding():
         if not node.positions:
             continue
 
+        # Add entry scaffolding at line 1
+        entry_offset = 1 << 16  # Line 1, discriminator 0
+        has_entry = any((off >> 16) == 1 for off in node.positions.keys())
+        if not has_entry:
+            node.positions[entry_offset] = 0
+            node.structural_zeros.add(entry_offset)
+            added_zeros += 1
+
         # Find line number range from actual positions
         lines = {(off >> 16) for off in node.positions.keys()}
         if not lines:
