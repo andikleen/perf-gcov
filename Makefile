@@ -1,7 +1,7 @@
-# could/should use the python build system instead
-CONFIG := python-config
+# could use the python build system instead
+CONFIG := python3.13-config
 BACKTRACESRC := ~/gcc/git/gcc/libbacktrace
-BACKTRACELIB := libbacktrace.a
+BACKTRACELIB := ~/gcc/git/obj-quick/libbacktrace/.libs/libbacktrace.a
 
 target := backtrace$(shell $(CONFIG) --extension-suffix)
 
