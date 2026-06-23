@@ -4,6 +4,8 @@
 # perf record -b -c 100003 -e branches:upp workload
 # gcov.py --binary workload file.gcov
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 # the code is written in typed python using mypy,
 # please run make typecheck to verify after changes
@@ -14,7 +16,6 @@
 # output multiple gcovs
 # support online mode
 # implement suffix elision policy for .
-# unit tests
 
 import os
 import sys
