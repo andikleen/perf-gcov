@@ -19,8 +19,7 @@
 
 import os
 import sys
-from collections import Counter, defaultdict, namedtuple
-from itertools import groupby, chain
+from collections import Counter, defaultdict
 import struct
 from typing import BinaryIO, NamedTuple, Final, Any
 import argparse
@@ -85,28 +84,12 @@ GCOV_DATA_MAGIC = 0x67636461 # 'gcda'
 GCOV_VERSION = 2
 HIST_TYPE_INDIR_CALL_TOPN = 7
 
-Location = NamedTuple('Location', [('sym', str),
-                                   ('srcid', int),
-                                   ('exeid', int),
-                                   ('offset', int)])
-EmptyLocation = Location("", 0, 0, 0)
-Key = NamedTuple('Key', [('src', Location),
-                         ('dst', Location)])
-Function = NamedTuple('Function', [('eid', int),
-                                   ('fid', int),
-                                   ('name', str)])
-Branch = NamedTuple('Branch', [('src', Location),
-                               ('dst', Location),
-                               ('count', int)])
-Inline = NamedTuple('Inline', [('fileid', int),
-                               ('name', str),
-                               ('offset', int)])
-
-PerfInline = NamedTuple('PerfInline', [('file', str),
-                                       ('line', int),
-                                       ('disc', int),
-                                       ('sym', str),
-                                       ('declline', int)])
+# One frame of an inline stack as returned by libbacktrace pcinfo.
+Frame = NamedTuple('Frame', [('file', str),
+                             ('line', int),
+                             ('disc', int),
+                             ('sym', str),
+                             ('declline', int)])
 
 class Stats:
     def __init__(self):
@@ -116,14 +99,15 @@ class Stats:
         self.total = 0
         self.ignored_branches = 0
         self.total_branches = 0
-        self.branches : Counter[Key] = Counter()
-        # XXX need file id to handle non unique
-        self.functions : set[Function] = set()
-        self.srcnames : dict[str, int] = dict()
-        self.exenames : dict[str, int] = dict()
-        self.inlinestacks : dict[Location, tuple[Inline, ...]] = dict()
-        self.inlinestrings : set[str] = set()
-        self.next_id = 1
+        # outermost function name -> profile tree root
+        self.tree : dict[str, "FuncNode"] = dict()
+
+    def root(self, name: str) -> "FuncNode":
+        node = self.tree.get(name)
+        if node is None:
+            node = FuncNode(name)
+            self.tree[name] = node
+        return node
 
 stats = Stats()
 
@@ -146,110 +130,107 @@ def gen_offset(line: int, disc: int) -> int:
     assert line >= 0, "line %d" % line
     return (line << 16) | disc
 
-def valid_call(b: Branch, func: str) -> bool:
-    return b.count >= args.threshold and b.src.sym != b.dst.sym and b.src.sym == func
-def wfunc_instance(f: BinaryIO,
-                   all_branches: list[Branch],
-                   string_index: dict[str, int],
-                   func: str,
-                   visited_inlines: set) -> None:
-    sbranches = sorted(all_branches, key=lambda x: x.src)
-    num = 0
-    hcount = 0
-    inlines = set()
-    for src, branchit in groupby(sbranches, lambda x: x.src):
-        branches = list(branchit)
-        new_inlines = set()
-        if branches[0].src in stats.inlinestacks:
-            new_inlines.add(stats.inlinestacks[branches[0].src])
-        if branches[0].src.sym != func:
-            stats.ignored_branches += 1
-            continue
-        count = 0
-        for b in branches:
-            count += b.count
-            if b.dst in stats.inlinestacks:
-                new_inlines.add(stats.inlinestacks[b.dst])
-        if count < args.threshold:
-            stats.ignored_branches += count
-            continue
-        inlines.update(new_inlines)
-        stats.total_branches += count
-        hcount += count
-        num += 1
-    wcounter(f, hcount)
-    w32(f, string_index[func])
-    w32(f, num)
-    #
-    # Number of records for inlined functions.
-    #
-    w32(f, len(inlines))
+class FuncNode:
+    """A node in the profile tree.
 
-    for src, branchit in groupby(sbranches, lambda x: x.src):
-        branches = list(branchit)
-        count = sum((b.count for b in branches))
-        if count < args.threshold:
-            continue
-        if branches[0].src.sym != func:
-            continue
-        # contains only source offset
-        # target is implicitly known by the compiler
-        w32(f, branches[0].src.offset)
-        num_calls = sum((1 if valid_call(b, func) else 0 for b in branches))
-        w32(f, num_calls)
+    Each node corresponds to one (possibly inlined) function instance.
+    Inlined callees are stored as child nodes keyed by the call offset in
+    this function and the callee name, mirroring gcc's nested
+    GCOV_TAG_AFDO_FUNCTION layout"""
+    __slots__ = ("name", "positions", "targets", "children")
+
+    def __init__(self, name: str):
+        self.name = name
+        # offset -> sample count for positions directly in this instance
+        self.positions: Counter[int] = Counter()
+        # offset -> {callee name -> count} for resolved call targets
+        self.targets: dict[int, Counter[str]] = defaultdict(Counter)
+        # (offset, callee name) -> child node for inlined callees
+        self.children: dict[tuple[int, str], FuncNode] = dict()
+
+    def child(self, offset: int, name: str) -> "FuncNode":
+        key = (offset, name)
+        node = self.children.get(key)
+        if node is None:
+            node = FuncNode(name)
+            self.children[key] = node
+        return node
+
+    def head_count(self) -> int:
+        # Entry/head count of a function instance is the maximum sample
+        # count seen, matching how an entry block dominates the body.
+        c = max(self.positions.values(), default=0)
+        for child in self.children.values():
+            c = max(c, child.head_count())
+        return c
+
+
+def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
+             count: int, target: str | None) -> None:
+    """Accumulate COUNT into the tree.
+
+    PATH is the inline call chain from the outermost real function down to
+    (but excluding) the innermost frame, as (function name, call offset)
+    pairs. OFFSET is the position offset within the innermost frame and
+    TARGET, if set, is a call target recorded at that position."""
+    node = root
+    for name, off in path:
+        node = node.child(off, name)
+    node.positions[offset] += count
+    if target is not None:
+        node.targets[offset][target] += count
+
+
+def collect_strings(node: FuncNode, out: set[str]) -> None:
+    out.add(node.name)
+    for targets in node.targets.values():
+        out.update(targets.keys())
+    for child in node.children.values():
+        collect_strings(child, out)
+
+
+def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
+               string_index: dict[str, int], toplevel: bool) -> None:
+    if toplevel:
+        wcounter(f, node.head_count())
+        w32(f, string_index[node.name])
+    else:
+        w32(f, offset)
+        w32(f, string_index[node.name])
+    # number of positions and number of inlined callees
+    w32(f, len(node.positions))
+    w32(f, len(node.children))
+
+    for off in sorted(node.positions):
+        count = node.positions[off]
+        targets = node.targets.get(off, Counter())
+        w32(f, off)
+        w32(f, len(targets))
         wcounter(f, count)
+        stats.total_branches += count
+        for tname, tcount in targets.most_common():
+            w32(f, HIST_TYPE_INDIR_CALL_TOPN)
+            wcounter(f, string_index[tname])
+            wcounter(f, tcount)
 
-        if args.verbose:
-            print(branches[0], len(branches), "count", count, "num_calls", num_calls)
-        # also dump call targets to other functions
-        if num_calls > 0:
-            for b in branches:
-                # should check branch type to see if it could be recursion
-                # otherwise cannot distinguish from an ordinary branch
-                # however this wouldn't work for recursive tail calls?
-                if not valid_call(b, func):
-                    continue
-                w32(f, HIST_TYPE_INDIR_CALL_TOPN)
-                wcounter(f, string_index[b.dst.sym])
-                wcounter(f, b.count)
-
-    # dump inline stack
-    if inlines:
-        for inl in inlines:
-            if inl in visited_inlines:
-                continue
-            # It is a call, not an inline. This can happen if the compiler
-            # decides not to inline a function.
-            if not inl:
-                continue
-            visited_inlines.add(inl)
-            wfunc_instance(f, all_branches, string_index, inl[0].name, visited_inlines)
+    for (coff, _), child in sorted(node.children.items()):
+        wfunc_node(f, child, coff, string_index, False)
 
 
 def gen_strtable(stats: Stats):
-    string_table = sorted(chain((x.name for x in stats.functions), stats.inlinestrings))
+    strings: set[str] = set()
+    for node in stats.tree.values():
+        collect_strings(node, strings)
+    string_table = sorted(strings)
     string_index = { name: i for i, name in enumerate(string_table) }
     return string_table, string_index
-
-def gen_func_table(stats: Stats) -> defaultdict[Function, list[Branch]]:
-    func_table: defaultdict[Function, list[Branch]] = defaultdict(list)
-    for k, count in stats.branches.items():
-        func_table[Function(k.src.exeid, k.src.srcid, k.src.sym)].append(Branch(k.src, k.dst, count))
-        if k.src.sym != k.dst.sym:
-            func_table[Function(k.dst.exeid, k.dst.srcid, k.dst.sym)].append(Branch(k.src, k.dst, count))
-    return func_table
 
 def trace_end():
     print("%d total, %d ignored, %d errored, %d crossed" %
           (stats.total, stats.ignored, stats.errored, stats.crossed))
 
-    if args.top > 0:
-        for a, b in stats.branches.most_common(args.top):
-            print(a, "\t", b, "%.2f" % (float(b)/stats.total*100.))
-
     # XXX multiple output files
     string_table, string_index = gen_strtable(stats)
-    func_table = gen_func_table(stats)
 
     with open(args.gcov if args.gcov else args.output, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
@@ -267,10 +248,10 @@ def trace_end():
         w32(f, GCOV_TAG_AFDO_FUNCTION)
         lenoff = f.tell()
         w32(f, 0) # length. ignored by gcc
-        print("Writing %d functions" % len(stats.functions))
-        w32(f, len(stats.functions))
-        for k in sorted(stats.functions, key=lambda x: x.name):
-            wfunc_instance(f, func_table[k], string_index, k.name, set())
+        print("Writing %d functions" % len(stats.tree))
+        w32(f, len(stats.tree))
+        for name in sorted(stats.tree):
+            wfunc_node(f, stats.tree[name], 0, string_index, True)
 
         if not pathlib.Path(f.name).is_fifo():
             endoff = f.tell()
@@ -292,66 +273,41 @@ def trace_end():
           (stats.total_branches,
            (float(stats.ignored_branches) / stats.total_branches * 100. if stats.total_branches else 0.0)))
 
-def get_id(d: dict[str,int], fn:str) -> int:
-    if fn in d:
-        return d[fn]
-    fid = stats.next_id
-    stats.next_id += 1
-    d[fn] = fid
-    return fid
-
-def get_fid(fn:str) -> int:
-    return get_id(stats.srcnames, fn)
-
-def get_eid(fn:str) -> int:
-    return get_id(stats.exenames, fn)
-
-SFILE: Final[int] = 0
-SLINE: Final[int] = 1
-SDISC: Final[int] = 2
-SEXE: Final[int] = 3
-SBUILDID: Final[int] = 4
-SINLINE: Final[int] = 5
-SDECLLINE: Final[int] = 6
-
-# indices into an inline-stack entry: (filename, lineno, discriminator,
-# function, decl_line)
-IFILENAME: Final[int] = 0
-ILINENO: Final[int] = 1
-IDISC: Final[int] = 2
-IFUNCTION: Final[int] = 3
-IDECLLINE: Final[int] = 4
-
-def ifmtres(x:PerfInline):
-    print(x)
-    return "%s at %s:%d[%d]:%d" % (x.sym, x.file, x.line, x.declline if isinstance(x.declline, int) else 0, x.disc)
-
-def ifmtrest(x:tuple[Any, ...]):
-    # format a getbt() tuple (file, line, disc, exe, buildid, inline, decl_line)
-    return ifmtres(PerfInline(x[SFILE], x[SLINE], x[SDISC], "", x[SDECLLINE]))
-
-def gen_inline(exe: Any, il: Any) -> list[Inline]:
-    def inline_tuple(x : PerfInline) -> Inline:
-        stats.inlinestrings.add(x.sym)
-        return Inline(get_fid(x.file), x.sym, gen_offset(x.line - x.declline, x.disc))
-    return [inline_tuple(PerfInline(x[IFILENAME], x[ILINENO], x[IDISC], x[IFUNCTION], x[IDECLLINE]))
-            for x in il]
-
-# convert to original perf tuple format
-# pcinfo returns tuples of (PC, filename, lineno, function, discriminator, decl_line)
-# The returned tuple is indexed by the SFILE..SDECLLINE constants below.
-def getbt(ip:int) -> tuple[str, int, int, Any, Any, Any, int] | None:
+# Return the inline/frame stack for IP as a list of Frame, ordered from the
+# outermost (real, symbol-table) function down to the innermost inlined
+# frame. Returns None if the address cannot be resolved.
+def getframes(ip:int) -> list[Frame] | None:
     p = backtrace.pcinfo(btstate, ip)
     #print("pcinfo %x" % ip, p)
-    if p is None:
+    if p is None or len(p) == 0:
         return None
     op = p[0]
-    # inline stack entries keep the full pcinfo layout
-    # (filename, lineno, discriminator, function, decl_line)
-    istack = tuple(((x[1], x[2], x[4], x[3], x[5]) for x in itertools.takewhile(lambda x: x[0] == op[0], p[1:])))
-    return (op[1], op[2], op[4], None, None, istack, op[5])
+    # pcinfo entry layout: (PC, filename, lineno, function, disc, decl_line)
+    # entries sharing op's PC form the inline stack, innermost first.
+    frames = [Frame(x[1], x[2], x[4], x[3], x[5])
+              for x in itertools.takewhile(lambda x: x[0] == op[0], p)]
+    if frames[0].file is None:
+        return None
+    frames.reverse()
+    return frames
 
-i2warned = set()
+def frame_offset(fr: Frame) -> int:
+    # offset of a frame relative to its function declaration line
+    base = fr.declline if fr.declline else fr.line
+    line = fr.line - base
+    if line < 0:
+        # XXX print warning
+        line = 0
+    return gen_offset(line, fr.disc)
+
+def sym_name(bsym: str, frame_sym: Any) -> str:
+    # prefer the symbol-table name from perf; fall back to the frame's
+    # function name from debug info.
+    if bsym and "+" in bsym:
+        return bsym.split("+")[0]
+    if bsym:
+        return bsym
+    return frame_sym if frame_sym else ""
 
 def process_event(param_dict):
     for br, bsym in zip(param_dict["brstack"], param_dict["brstacksym"]):
@@ -362,65 +318,41 @@ def process_event(param_dict):
         if os.path.basename(br["from_dsoname"]) != os.path.basename(args.binary):
             stats.ignored += 1
             continue
-        res = (getbt(br["from"]), getbt(br["to"]))
-        if res[0] is None or res[1] is None:
-            print("Ignored fail")
+        sframes = getframes(br["from"])
+        dframes = getframes(br["to"])
+        if sframes is None or dframes is None:
             stats.ignored += 1
             continue
 
-        # source_file_name, line_number, discriminator, executable, build-id, inline-stack, decl_line for each entry of a brstack from the sample. Inline stack is a list of inlines with filename, line number, discriminator, symbolname, decl_line for each entry.
-        def resolve(res:tuple[Any, ...],
-                    s:str,
-                    exe:str,
-                    ip:int) -> Location:
-            if "+" in s:
-                sym, ipoff = s.split("+")
-                symip = ip - int(ipoff, 16)
-                symres = getbt(symip)
-                if symres:
-                    #print("symres",symres, "res", res, "ip %x" % ip, "symip %x" % symip)
-                    eid = get_eid(exe)
-                    fid = get_fid(symres[0])
-                    key = Function(eid, fid, sym)
-                    stats.functions.add(key)
-                    if symres[SFILE] == res[SFILE]:
-                        # offsets are relative to the function declaration
-                        # line (DW_AT_decl_line), matching gcc/autofdo. Fall
-                        # back to the symbol's first line if unavailable.
-                        baseline = symres[SDECLLINE] if symres[SDECLLINE] else symres[SLINE]
-                        if res[SLINE] < baseline:
-                            if args.verbose and (symres, res) not in i2warned:
-                                print(res)
-                                print("symbol %s %s sample %s has negative line offset" % (
-                                    sym,
-                                    ifmtrest(symres),
-                                     ifmtrest(res)))
-                                i2warned.add((symres, res))
-                            return EmptyLocation
-                        lineoff = res[SLINE] - baseline
-                        return Location(sym, fid, eid, gen_offset(lineoff, res[SDISC]))
-            if args.verbose:
-                print("Cannot resolve", res)
-            stats.errored += 1
-            return EmptyLocation
-
-        key = Key(resolve(res[0],
-                          bsym["from"],
-                          br["from_dsoname"],
-                          br["from"]),
-                  resolve(res[1],
-                          bsym["to"],
-                          br["to_dsoname"],
-                          br["to"]))
-        if not key.src.sym or not key.dst.sym:
+        # The outermost frame is the real (symbol table) function; perf
+        # gives us its name in bsym. Inner frames are inlined callees.
+        sroot_name = sym_name(bsym["from"], sframes[0].sym)
+        droot_name = sym_name(bsym["to"], dframes[0].sym)
+        if not sroot_name:
             continue
-        stats.branches[key] += 1
-        # handle src too?
-        if res[1][SINLINE]:
-            ikey = key.dst
-            if ikey not in stats.inlinestacks:
-                if args.verbose:
-                    print("inline", ikey, res[1][SINLINE])
-                istack = gen_inline(res[1][SEXE], res[1][SINLINE])
-                if istack != EmptyLocation:
-                    stats.inlinestacks[ikey] = tuple(istack)
+
+        # innermost frames decide whether this branch is a call leaving the
+        # current (possibly inlined) function.
+        sinner = sframes[-1]
+        dinner = dframes[-1]
+        is_call = sinner.sym != dinner.sym
+
+        # Walk the source inline stack from outermost to innermost. The
+        # outermost frame is the root function; each deeper frame is an
+        # inlined callee reached at the *caller* frame's call offset. The
+        # innermost frame holds the branch position.
+        names = [sroot_name] + [fr.sym for fr in sframes[1:]]
+        if any(not n for n in names):
+            continue
+        # callsite path: (callee name, call offset in caller) pairs
+        path: list[tuple[str, int]] = []
+        for i in range(1, len(sframes)):
+            # frame i is reached from frame i-1 at frame i-1's offset
+            path.append((names[i], frame_offset(sframes[i - 1])))
+        leaf_off = frame_offset(sframes[-1])
+        target = None
+        if is_call:
+            target = droot_name if len(dframes) == 1 else (dinner.sym if dinner.sym else droot_name)
+        add_path(stats.root(sroot_name), path, leaf_off, 1, target)
+
+
