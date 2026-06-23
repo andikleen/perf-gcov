@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test one csmith-generated C file through perf-gcov and AutoFDO.
+# Test one csmith-generated C file through perf-gcov and create_gcov.
 
 CC=${CC:-gcc}
 PERF=${PERF:-perf}
@@ -30,28 +30,24 @@ fi
 
 $CC -w -g -O2 -I/usr/include/csmith -o "$base" "$src"
 timeout 30 $PERF record -b -o "${base}.data" -c 10001 -e branches:ppu "./${base}" || true
-$PERF script -i "${base}.data" gcov.py "${base}.gcov" --verbose --binary "$base"
+$PERF script -i "${base}.data" gcov.py "${base}.gcov" --binary "$base"
 ./dump.py --max-count 1000000 "${base}.gcov" > "${base}.dump"
-if [ -n "$(type -p dump_gcov)" ] ; then
-    echo "autofdo dump"
-    dump_gcov "${base}.gcov"
-    create_gcov -gcov_version 2 --binary "$base" --gcov "${base}.gcov2" --profile "${base}.data"
+
+if [ -n "$(type -p create_gcov)" ] ; then
+    create_gcov -gcov_version 2 --binary "$base" --gcov "${base}.gcov2" --profile "${base}.data" 2>&1 | grep -v "WARNING:" || true
     ./dump.py "${base}.gcov2" > "${base}.dump2"
-    echo "autofdo reference dump"
-    dump_gcov "${base}.gcov2"
-    echo "diff gcov.py vs create_gcov"
-    if ! diff -u "${base}.dump" "${base}.dump2" ; then
-        echo "non-identical dump accepted; checking non-zero offsets"
-    fi
-    awk '/^[[:space:]]+[0-9]+(\.[0-9]+)?:/ && $2 != 0 { sub(/^[[:space:]]+/, ""); sub(/:.*/, ""); sub(/\..*/, ""); print }' "${base}.dump" | sort -u > "${base}.offsets"
-    awk '/^[[:space:]]+[0-9]+(\.[0-9]+)?:/ && $2 != 0 { sub(/^[[:space:]]+/, ""); sub(/:.*/, ""); sub(/\..*/, ""); print }' "${base}.dump2" | sort -u > "${base}.offsets2"
-    comm -23 "${base}.offsets" "${base}.offsets2" > "${base}.offsets.missing"
-    if [ -s "${base}.offsets.missing" ] ; then
-        echo "source line offsets missing from create_gcov reference"
-        cat "${base}.offsets.missing"
-        false
+    
+    echo "=== Comparing dumps ==="
+    if diff -u "${base}.dump" "${base}.dump2" ; then
+        echo "PASS: Dumps are identical"
+    else
+        echo "FAIL: Dumps differ"
+        echo "Diff saved to ${base}.diff"
+        diff -u "${base}.dump" "${base}.dump2" > "${base}.diff" || true
+        exit 1
     fi
 fi
+
 $CC -w -g -O2 -fauto-profile="${base}.gcov" "$src" -o "${base}.opt"
 "./${base}.opt"
 
