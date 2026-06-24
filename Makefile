@@ -29,6 +29,9 @@ clean:
 		$(addsuffix .opt,$(TESTS)) \
 		$(addsuffix .offsets,$(TESTS)) \
 		$(addsuffix .offsets2,$(TESTS)) \
+		$(addsuffix .dump,$(TESTS)) \
+		$(addsuffix .dump2,$(TESTS)) \
+		$(addsuffix .diff,$(TESTS)) \
 		$(TESTS)
 
 typecheck:
