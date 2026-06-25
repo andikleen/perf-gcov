@@ -721,7 +721,16 @@ def add_dwarf_zero_scaffolding():
         max_line = max(lines)
 
         # Add epilogue zero at a line beyond max observed
-        # Match create_gcov's pattern: typically max_line + 3-5 lines
+        # The +3 offset is an empirical heuristic that approximates where AutoFDO
+        # places epilogue scaffolding. AutoFDO derives this from DWARF line table
+        # end_sequence markers, which compilers typically place 2-4 lines past the
+        # last executable statement in a function (accounting for closing braces,
+        # return statements, and compiler-generated epilogue code).
+        #
+        # Note: This is a cosmetic heuristic. GCC's -fauto-profile only cares about
+        # execution counts, not exact scaffolding placement. A proper implementation
+        # would require parsing DWARF line table end_sequence markers or querying
+        # DW_AT_high_pc from function DIEs.
         epilogue_line = max_line + 3
         epilogue_offset = epilogue_line << 16
 
