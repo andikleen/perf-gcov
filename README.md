@@ -11,14 +11,9 @@ the Linux perf tool.
 Eventual goal is to support an online modus that supports contiguous profiling of the system
 and then rebuilding pieces with profile feedback.
 
-Requires gcc with the libbacktrace patches in
-https://github.com/andikleen/gcc/tree/libbacktrace-disc-7
-applied. Also depending on your python version (what perf was built with, check with ldd if needed)
-may need to change the python-config in the Makefile.
-
 # Setup
 
-Build a gcc with the patch in https://github.com/andikleen/gcc/tree/libbacktrace-disc-7 
+Build a gcc with the patch in https://github.com/andikleen/gcc/tree/libbacktrace-disc-8
 
 Then copy the <gccbuilddir>/libbacktrace/.libs/libbacktrace.a
 and <gccsrcdir>/libbacktrace/backtrace.h files to this directory.

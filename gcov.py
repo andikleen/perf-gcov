@@ -63,7 +63,7 @@ ap.add_argument('--threshold', default=10, type=int, help="Min number of samples
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, type=int, help="Print N top samples")
 ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
-ap.add_argument('--gcov-version', type=int, choices=[2, 3], default=3,
+ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], default=3,
                 help="GCOV version: 2 (function names only) or 3 (with source files, default)")
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
