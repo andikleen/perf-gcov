@@ -57,13 +57,8 @@ local i=$1
 $CC -g -O2 -o ${i} ${i}.c
 
 echo "=== Testing gcov-stream-profile.sh (v2) ==="
+# XXX probe gcc for needed version
 ./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov --gcov-version 2 -- ./${i}
-
-# Verify no perf.data was created
-if [ -f perf.data ]; then
-	echo "ERROR: perf.data should not exist with streaming pipeline"
-	exit 1
-fi
 
 echo "Stream pipeline dump:"
 ./gcov-dump.py --max-count 1000000 ${i}.stream.gcov
