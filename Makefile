@@ -18,7 +18,7 @@ ${target}: backtracemodule.o
 backtracemodule.o: backtracemodule.c
 	gcc -Wall -I.  -fPIC $(shell ${CONFIG} --includes --cflags) -I ${BACKTRACESRC} -c backtracemodule.c
 
-TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall
+TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall test-lto
 
 clean:
 	rm -f backtracemodule.o ${target} \

@@ -27,15 +27,9 @@ cleanup_test_files() {
 	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2
 }
 
-test() {
-local i=$1
-$CC -g -O2 -o ${i} ${i}.c
-$PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
-
-# Test v2 (default test, backward compatibility)
-$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
-./dump.py --max-count 1000000 ${i}.gcov
-if [ -n "$(type -p dump_gcov)" ] ; then
+# Compare gcov.py output with create_gcov reference
+diff_check() {
+	local i=$1
 	echo "autofdo dump"
 	dump_gcov ${i}.gcov > ${i}.dump
 	cat ${i}.dump
@@ -55,6 +49,55 @@ if [ -n "$(type -p dump_gcov)" ] ; then
 		cat ${i}.offsets.missing
 		false
 	fi
+}
+
+# Test function for test-lto (multi-file with LTO)
+test_lto() {
+local i=$1
+shift
+local sources="$@"
+$CC -g -O2 -flto -o ${i} ${sources}
+$PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
+
+# Test v2 (default test, backward compatibility)
+$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
+./dump.py --max-count 1000000 ${i}.gcov
+if [ -n "$(type -p dump_gcov)" ] ; then
+	diff_check ${i}
+fi
+$CC -g -O2 -flto -fauto-profile=${i}.gcov ${sources} -o ${i}.opt
+./${i}.opt
+
+# Test v3 (new format with source files)
+echo "=== Testing GCOV v3 format ==="
+$PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-version 3
+echo "v3 dump:"
+./dump.py ${i}.gcov3 > ${i}.dump3
+cat ${i}.dump3
+
+if check_gcc_v3_support ; then
+	echo "GCC 16+ detected, testing with -fauto-profile"
+	$CC -g -O2 -flto -fauto-profile=${i}.gcov3 ${sources} -o ${i}.opt3
+	./${i}.opt3
+	echo "v3 profile works with GCC!"
+else
+	echo "GCC < 16, skipping -fauto-profile test for v3 (format validation only)"
+fi
+
+# Cleanup temporary test files
+cleanup_test_files ${i}
+}
+
+test() {
+local i=$1
+$CC -g -O2 -o ${i} ${i}.c
+$PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
+
+# Test v2 (default test, backward compatibility)
+$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
+./dump.py --max-count 1000000 ${i}.gcov
+if [ -n "$(type -p dump_gcov)" ] ; then
+	diff_check ${i}
 fi
 $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
 ./${i}.opt
@@ -84,6 +127,7 @@ test tdisc
 test tswitch
 test tgoto
 test tinlines
+test_lto test-lto test-lto.c test-lto-2.c
 
 if [ "$1" = "random" ] ; then
 	for (( i=0; i < ${2:-10}; i++ )) ; do
