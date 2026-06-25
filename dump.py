@@ -8,6 +8,7 @@ ap.add_argument('gcovfile', type=argparse.FileType('rb'))
 ap.add_argument('--max-count', type=int, help="Error out if any count is larger than N")
 args = ap.parse_args()
 
+GCOV_TAG_AFDO_SUMMARY = 0xa8000000
 GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
 GCOV_TAG_AFDO_FUNCTION = 0xac000000
 GCOV_TAG_AFDO_MODULE_GROUPING = 0xae000000
@@ -77,7 +78,47 @@ if version not in [2, 3]:
 print(f"GCOV version: {version}")
 r32(f)
 
-expect("string table magic", r32(f), GCOV_TAG_AFDO_FILE_NAMES)
+# Read summary section (v3 only)
+if version == 3:
+    tag = r32(f)
+    if tag == GCOV_TAG_AFDO_SUMMARY:
+        print("=" * 50)
+        print("PROFILE SUMMARY")
+        print("=" * 50)
+        total_count = rcounter(f)
+        max_count = rcounter(f)
+        max_function_count = rcounter(f)
+        num_counts = rcounter(f)
+        num_functions = rcounter(f)
+        num_detailed = rcounter(f)
+
+        print(f"Total count:          {total_count:,}")
+        print(f"Max count:            {max_count:,}")
+        print(f"Max function count:   {max_function_count:,}")
+        print(f"Number of counts:     {num_counts:,}")
+        print(f"Number of functions:  {num_functions:,}")
+        print(f"\nDetailed summaries ({num_detailed}):")
+        print(f"{'Percentile':>12} {'Min Count':>15} {'Num Counts':>15}")
+        print("-" * 50)
+
+        for i in range(num_detailed):
+            cutoff = r32(f)
+            min_count = rcounter(f)
+            num = rcounter(f)
+            percentile = cutoff / 10000.0
+            print(f"{percentile:>11.4f}% {min_count:>15,} {num:>15,}")
+
+        print("=" * 50)
+        print()
+
+        # Read next tag (should be FILE_NAMES)
+        tag = r32(f)
+
+    # Check we got FILE_NAMES tag
+    expect("string table magic", tag, GCOV_TAG_AFDO_FILE_NAMES)
+else:
+    # v2: next tag should be FILE_NAMES
+    expect("string table magic", r32(f), GCOV_TAG_AFDO_FILE_NAMES)
 r32(f)  # length
 
 file_table = []

@@ -78,6 +78,7 @@ btstate = backtrace.createstate(args.binary)
 def trace_begin():
     pass
 
+GCOV_TAG_AFDO_SUMMARY = 0xa8000000
 GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
 GCOV_TAG_AFDO_FUNCTION = 0xac000000
 GCOV_TAG_AFDO_MODULE_GROUPING = 0xae000000
@@ -362,6 +363,126 @@ def gen_strtable_v3(stats: Stats):
 
     return file_table, file_index, func_file_map, string_table, string_index
 
+def compute_summary(stats: Stats) -> dict:
+    """Compute profile summary statistics for GCOV_TAG_AFDO_SUMMARY.
+
+    Traverses the profile tree and computes aggregate statistics and
+    percentile-based histogram (detailed summaries) showing how execution
+    counts are distributed.
+
+    - Recursively traverse all nodes (including inlined children)
+    - Count only top-level functions in num_functions
+    - Use cumulative percentile histogram (persistent state across cutoffs)
+    """
+    # Default percentile cutoffs (from AutoFDO)
+    # These are in parts per million: 10000 = 1%, 100000 = 10%, etc.
+    DEFAULT_CUTOFFS = [
+        10000, 100000, 200000, 300000, 400000, 500000, 600000, 700000,
+        800000, 900000, 950000, 990000, 999000, 999900, 999990, 999999
+    ]
+
+    total_count = 0
+    max_count = 0
+    max_function_count = 0
+    num_counts = 0
+    num_functions = len(stats.tree)  # Count only top-level functions (matches AutoFDO)
+    count_frequencies = {}  # {count: frequency}
+
+    def traverse_node(node: FuncNode, is_root: bool = False) -> None:
+        """Recursively traverse a node and its inlined children.
+        """
+        nonlocal total_count, max_count, max_function_count, num_counts
+
+        # For root nodes, track function entry count (offset 0)
+        # This matches AutoFDO's VisitTopSymbol which tracks node->head_count
+        if is_root and 0 in node.positions:
+            func_head_count = node.positions[0]
+            max_function_count = max(max_function_count, func_head_count)
+
+        # Collect all position counts from this node
+        # Filter out zero counts (structural positions with no execution)
+        for offset, count in node.positions.items():
+            if count > 0:
+                total_count += count
+                max_count = max(max_count, count)
+                num_counts += 1
+                count_frequencies[count] = count_frequencies.get(count, 0) + 1
+
+        # Recursively traverse inlined children (callsites)
+        # This matches AutoFDO's Traverse which iterates node->callsites
+        for (call_offset, callee_name), child in node.children.items():
+            traverse_node(child, is_root=False)
+
+    # Traverse all top-level functions
+    for func_name, func_node in stats.tree.items():
+        traverse_node(func_node, is_root=True)
+
+    # Compute detailed summaries (percentile histogram)
+    # This follows AutoFDO's ComputeDetailedSummary algorithm:
+    # - Sort counts descending (hottest first)
+    # - Iterate cutoffs ascending (1%, 10%, 20%, ...)
+    # - Use PERSISTENT state (cumulative histogram)
+    detailed_summaries = []
+    if total_count > 0 and count_frequencies:
+        # Sort counts in descending order (hottest first)
+        sorted_counts = sorted(count_frequencies.items(), key=lambda x: x[0], reverse=True)
+        cumulative_sum = 0
+        cumulative_samples = 0
+        idx = 0
+
+        for cutoff in DEFAULT_CUTOFFS:
+            # Calculate threshold: what cumulative count represents this percentile?
+            # AutoFDO uses uint128_t to avoid overflow, but Python handles arbitrary precision
+            # Note: cutoff is in parts per million (10000 = 1%, 1000000 = 100%)
+            threshold = (total_count * cutoff) // 1_000_000
+            last_count = 0
+
+            # Accumulate counts until we reach the threshold
+            # State persists across iterations (cumulative)
+            while cumulative_sum < threshold and idx < len(sorted_counts):
+                count, freq = sorted_counts[idx]
+                cumulative_sum += count * freq
+                cumulative_samples += freq
+                last_count = count
+                idx += 1
+
+            # Store cumulative result: "Top N positions accounting for X% of execution"
+            detailed_summaries.append({
+                'cutoff': cutoff,
+                'min_count': last_count,
+                'num_counts': cumulative_samples
+            })
+
+    return {
+        'total_count': total_count,
+        'max_count': max_count,
+        'max_function_count': max_function_count,
+        'num_counts': num_counts,
+        'num_functions': num_functions,
+        'detailed_summaries': detailed_summaries
+    }
+
+def write_summary(f: BinaryIO, summary: dict) -> None:
+    """Write GCOV_TAG_AFDO_SUMMARY section.
+
+    Writes the profile summary statistics in GCOV v3 format.
+    Note: Unlike other sections, SUMMARY has no length field - the tag is
+    followed directly by the data fields.
+    """
+    w32(f, GCOV_TAG_AFDO_SUMMARY)
+    wcounter(f, summary['total_count'])
+    wcounter(f, summary['max_count'])
+    wcounter(f, summary['max_function_count'])
+    wcounter(f, summary['num_counts'])
+    wcounter(f, summary['num_functions'])
+    wcounter(f, len(summary['detailed_summaries']))
+
+    for ds in summary['detailed_summaries']:
+        w32(f, ds['cutoff'])
+        wcounter(f, ds['min_count'])
+        wcounter(f, ds['num_counts'])
+
+
 def collect_strings_v3(node: FuncNode, func_names: set[str], files: set[str],
                        func_to_file: dict[str, str | None]) -> None:
     """Recursively collect function names and source files for v3 format.
@@ -373,12 +494,6 @@ def collect_strings_v3(node: FuncNode, func_names: set[str], files: set[str],
 
     For call targets, attempts to resolve source files via stats.tree lookup.
     If not found, marks as None (external function).
-
-    Args:
-        node: Current function node to process
-        func_names: Set to accumulate all function names (mutated)
-        files: Set to accumulate all source filenames (mutated)
-        func_to_file: Mapping from function name to source file (mutated)
     """
     func_names.add(node.name)
     if node.source_file:
@@ -647,6 +762,12 @@ def trace_end():
         w32(f, GCOV_DATA_MAGIC)
         w32(f, args.gcov_version)  # Write actual version from args
         w32(f, 0)
+
+        # Write summary section (v3 only)
+        if args.gcov_version == 3:
+            summary = compute_summary(stats)
+            write_summary(f, summary)
+            print(f"Summary: {summary['num_functions']} functions, {summary['num_counts']} counts, total={summary['total_count']}")
 
         # Write string table (version-specific)
         w32(f, GCOV_TAG_AFDO_FILE_NAMES)
