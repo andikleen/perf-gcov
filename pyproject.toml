@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perf-gcov"
+version = "0.1.0"
+description = "gcc auto-profile gcov profile generator from Linux perf branch samples"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Andi Kleen", email = "perf-gcov@halobates.de"}
+]
+keywords = ["perf", "gcov", "autofdo", "profiling", "performance"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: C",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: System :: Monitoring",
+]
+
+[project.urls]
+Homepage = "https://github.com/andikleen/perf-gcov"
+Repository = "https://github.com/andikleen/perf-gcov"
+
+[tool.setuptools]
+py-modules = ["gcov", "gcov-dump"]

@@ -1,0 +1,13 @@
+# Required for C extension build
+include libbacktrace.a
+include backtrace.h
+
+# Scripts (already in setup.py, but explicit is better)
+include gcov-stream-profile.sh
+
+# Documentation
+include design.md
+include PIPELINE-IMPLEMENTATION-PLAN.md
+
+# Optional: Allow manual rebuild
+include Makefile
