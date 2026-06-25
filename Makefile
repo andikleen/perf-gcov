@@ -35,7 +35,7 @@ clean:
 		$(TESTS)
 
 typecheck:
-	mypy gcov.py dump.py --check-untyped-defs
+	mypy gcov.py gcov-dump.py --check-untyped-defs
 
 test:
 	./tester
