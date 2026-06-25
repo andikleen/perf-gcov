@@ -26,6 +26,15 @@ gcov.py --binary workload file.gcov
 gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 ```
 
+or alternatively:
+
+```
+gcc -O2 -o workload ...
+gcov-stream-profile.sh workload
+gcc -fauto-profile=workload.gcov -o workload.opt -O2 ...
+
+```
+
 Differences to autofdo:
 
 Much less testing.

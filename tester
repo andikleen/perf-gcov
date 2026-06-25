@@ -24,7 +24,7 @@ check_gcc_v3_support() {
 
 cleanup_test_files() {
 	local i=$1
-	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2
+	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2 ${i}.stream.gcov
 }
 
 # Compare gcov.py output with create_gcov reference
@@ -49,6 +49,46 @@ diff_check() {
 		cat ${i}.offsets.missing
 		false
 	fi
+}
+
+# Test gcov-stream-profile.sh (streaming pipeline without perf.data)
+test_stream() {
+local i=$1
+$CC -g -O2 -o ${i} ${i}.c
+
+echo "=== Testing gcov-stream-profile.sh (v2) ==="
+./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov --gcov-version 2 -- ./${i}
+
+# Verify no perf.data was created
+if [ -f perf.data ]; then
+	echo "ERROR: perf.data should not exist with streaming pipeline"
+	exit 1
+fi
+
+echo "Stream pipeline dump:"
+./dump.py --max-count 1000000 ${i}.stream.gcov
+
+# Compile with the streamed profile
+$CC -g -O2 -fauto-profile=${i}.stream.gcov ${i}.c -o ${i}.stream.opt
+./${i}.stream.opt
+
+echo "=== Testing gcov-stream-profile.sh (v3) ==="
+./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov3 --gcov-version 3 -- ./${i}
+
+echo "v3 stream pipeline dump:"
+./dump.py ${i}.stream.gcov3
+
+if check_gcc_v3_support ; then
+	echo "GCC 16+ detected, testing v3 stream profile with -fauto-profile"
+	$CC -g -O2 -fauto-profile=${i}.stream.gcov3 ${i}.c -o ${i}.stream.opt3
+	./${i}.stream.opt3
+	echo "v3 stream profile works with GCC!"
+else
+	echo "GCC < 16, skipping -fauto-profile test for v3 stream (format validation only)"
+fi
+
+# Cleanup stream-specific files
+rm -f ${i}.stream.gcov ${i}.stream.gcov3 ${i}.stream.opt ${i}.stream.opt3
 }
 
 # Test function for test-lto (multi-file with LTO)
@@ -123,7 +163,9 @@ cleanup_test_files ${i}
 }
 
 test tcall
+test_stream tcall
 test tdisc
+test_stream tdisc
 test tswitch
 test tgoto
 test tinlines
