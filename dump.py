@@ -71,15 +71,44 @@ def dump_pos(num_pos, callsites):
         dump_pos(num_pos, num_call)
 
 expect("magic", r32(f), GCOV_DATA_MAGIC)
-warn_expect("version", r32(f), GCOV_VERSION)
+version = r32(f)
+if version not in [2, 3]:
+    sys.exit(f"Unsupported GCOV version {version}. Expected version 2 or 3, but file contains version {version}. The file may be corrupted or from an incompatible version.")
+print(f"GCOV version: {version}")
 r32(f)
 
 expect("string table magic", r32(f), GCOV_TAG_AFDO_FILE_NAMES)
-r32(f) # len
-num = r32(f)
-str_table = dict()
-for i in range(num):
-    str_table[i] = rstring(f)
+r32(f)  # length
+
+file_table = []
+str_table = {}
+
+if version == 2:
+    # v2: just function names
+    num = r32(f)
+    for i in range(num):
+        str_table[i] = rstring(f)
+
+elif version == 3:
+    # v3: file names, then functions with file indices
+    num_files = r32(f)
+    for i in range(num_files):
+        file_table.append(rstring(f))
+
+    num_funcs = r32(f)
+    for i in range(num_funcs):
+        func_name = rstring(f)
+        file_idx = r32(f)
+
+        # Format as "function:file" (AutoFDO style)
+        if file_idx < len(file_table):
+            str_table[i] = f"{func_name}:{file_table[file_idx]}"
+        elif file_idx == 0xFFFFFFFF:  # -1 as unsigned
+            str_table[i] = func_name  # No file info
+        else:
+            # Invalid index - file may be corrupted
+            print(f"Warning: function '{func_name}' has invalid file index {file_idx} (max valid: {len(file_table)-1})", file=sys.stderr)
+            str_table[i] = f"{func_name}:<?>"
 
 expect("function magic", r32(f), GCOV_TAG_AFDO_FUNCTION)
 r32(f) # len

@@ -62,13 +62,13 @@ ap.add_argument('--threshold', default=10, type=int, help="Min number of samples
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, type=int, help="Print N top samples")
 ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
-ap.add_argument('--gcov_version', type=int, help="gcov version. Only 2 supported", default=2)
+ap.add_argument('--gcov-version', type=int, choices=[2, 3], default=3,
+                help="GCOV version: 2 (function names only) or 3 (with source files, default)")
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
+ap.add_argument('--insn-range-max', type=int, default=1<<20, help="Max range between branches to probe")
 args = ap.parse_args()
 
-if args.gcov_version != 2:
-    sys.exit("Only gcov version 2 is supported")
 if args.binary is None:
     sys.exit("Need --binary")
 
@@ -117,11 +117,13 @@ class Stats:
         self.missing_symbols = 0         # Frames with no symbol name
         self.incomplete_stacks = 0       # Incomplete inline stacks
 
-    def root(self, name: str) -> "FuncNode":
+    def root(self, name: str, source_file: str | None = None) -> "FuncNode":
         node = self.tree.get(name)
         if node is None:
-            node = FuncNode(name)
+            node = FuncNode(name, source_file)
             self.tree[name] = node
+        elif source_file and not node.source_file:
+            node.source_file = source_file
         return node
 
 stats = Stats()
@@ -203,10 +205,11 @@ class FuncNode:
     Inlined callees are stored as child nodes keyed by the call offset in
     this function and the callee name, mirroring gcc's nested
     GCOV_TAG_AFDO_FUNCTION layout"""
-    __slots__ = ("name", "positions", "targets", "children", "structural_zeros")
+    __slots__ = ("name", "source_file", "positions", "targets", "children", "structural_zeros")
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, source_file: str | None = None):
         self.name = name
+        self.source_file = source_file  # basename from DWARF
         # offset -> sample count for positions directly in this instance
         self.positions: Counter[int] = Counter()
         # offset -> {callee name -> count} for resolved call targets
@@ -219,12 +222,14 @@ class FuncNode:
         # it is not directly persisted to the GCOV file format.
         self.structural_zeros: set[int] = set()
 
-    def child(self, offset: int, name: str) -> "FuncNode":
+    def child(self, offset: int, name: str, source_file: str | None = None) -> "FuncNode":
         key = (offset, name)
         node = self.children.get(key)
         if node is None:
-            node = FuncNode(name)
+            node = FuncNode(name, source_file)
             self.children[key] = node
+        elif source_file and not node.source_file:
+            node.source_file = source_file
         return node
 
     def head_count(self) -> int:
@@ -237,16 +242,18 @@ class FuncNode:
         return any(child.has_output() for child in self.children.values())
 
 def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
-             count: int, target: str | None) -> None:
+             count: int, target: str | None, inline_source_files: list[str | None] | None = None) -> None:
     """Accumulate COUNT into the tree.
 
     PATH is the inline call chain from the outermost real function down to
     (but excluding) the innermost frame, as (function name, call offset)
     pairs. OFFSET is the position offset within the innermost frame and
-    TARGET, if set, is a call target recorded at that position."""
+    TARGET, if set, is a call target recorded at that position.
+    inline_source_files are the source files for each inline frame in path."""
     node = root
-    for name, off in path:
-        node = node.child(off, name)
+    for i, (name, off) in enumerate(path):
+        src_file = inline_source_files[i] if inline_source_files and i < len(inline_source_files) else None
+        node = node.child(off, name, src_file)
     node.positions[offset] += count
     if target is not None:
         node.targets[offset][target] += count
@@ -316,6 +323,86 @@ def gen_strtable(stats: Stats):
     string_index = { name: i for i, name in enumerate(string_table) }
     return string_table, string_index
 
+def gen_strtable_v3(stats: Stats):
+    """Generate string table for GCOV v3 format with file names.
+
+    Returns:
+        file_table: list[str] - sorted unique source filenames
+        file_index: dict[str, int] - filename → index mapping
+        func_file_map: dict[str, int] - function name → file index mapping
+        string_table: list[str] - sorted unique function/target names
+        string_index: dict[str, int] - string → index mapping
+    """
+    source_files: set[str] = set()
+    function_names: set[str] = set()
+    func_to_file: dict[str, str | None] = {}
+
+    # Collect from tree roots
+    for name, node in stats.tree.items():
+        if node.source_file:
+            source_files.add(node.source_file)
+            func_to_file[name] = node.source_file
+        collect_strings_v3(node, function_names, source_files, func_to_file)
+
+    # Build file table and index
+    file_table = sorted(source_files)
+    file_index = {fname: i for i, fname in enumerate(file_table)}
+
+    # Build function → file_index mapping
+    func_file_map = {}
+    for func_name, src_file in func_to_file.items():
+        if src_file and src_file in file_index:
+            func_file_map[func_name] = file_index[src_file]
+        else:
+            func_file_map[func_name] = -1  # No file info
+
+    # Build string table
+    string_table = sorted(function_names)
+    string_index = {name: i for i, name in enumerate(string_table)}
+
+    return file_table, file_index, func_file_map, string_table, string_index
+
+def collect_strings_v3(node: FuncNode, func_names: set[str], files: set[str],
+                       func_to_file: dict[str, str | None]) -> None:
+    """Recursively collect function names and source files for v3 format.
+
+    Traverses the function tree and collects:
+    - All function names (including inline children and call targets)
+    - All source filenames referenced by functions
+    - Mapping from function names to their source files
+
+    For call targets, attempts to resolve source files via stats.tree lookup.
+    If not found, marks as None (external function).
+
+    Args:
+        node: Current function node to process
+        func_names: Set to accumulate all function names (mutated)
+        files: Set to accumulate all source filenames (mutated)
+        func_to_file: Mapping from function name to source file (mutated)
+    """
+    func_names.add(node.name)
+    if node.source_file:
+        files.add(node.source_file)
+        if node.name not in func_to_file:
+            func_to_file[node.name] = node.source_file
+
+    # Collect from call targets
+    for _, _, targets in filtered_positions(node):
+        func_names.update(targets.keys())
+        # For targets, try to look up source file from tree if not already mapped
+        for target_name in targets.keys():
+            if target_name not in func_to_file:
+                # Try to find this function in the tree
+                if target_name in stats.tree and stats.tree[target_name].source_file:
+                    func_to_file[target_name] = stats.tree[target_name].source_file
+                else:
+                    func_to_file[target_name] = None  # No file info
+
+    # Recurse into inline children
+    for _, _, child in emitted_children(node):
+        collect_strings_v3(child, func_names, files, func_to_file)
+
+
 def expand_ranges() -> None:
     """Expand range_counts into position counts in the profile tree.
 
@@ -357,7 +444,9 @@ def expand_ranges() -> None:
 
     # Now process each address and map to source positions
     # For each unique (root, path, offset), take MAX count from all addresses mapping to it
+    # Also track source files for root and inline frames
     position_max_counts: dict[tuple[str, tuple[tuple[str, int], ...], int], int] = {}
+    position_source_files: dict[tuple[str, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
 
     for addr, addr_count in address_counts.items():
         frames = getframes_cached(addr)
@@ -372,11 +461,15 @@ def expand_ranges() -> None:
             continue
 
         root_name = root_frame.sym
+        root_source_file = os.path.basename(root_frame.file) if root_frame.file else None
+
         names: list[str] = [root_name]
+        source_files: list[str | None] = [root_source_file]
         for fr in frames[1:]:
             if not fr.sym:
                 break
             names.append(fr.sym)
+            source_files.append(os.path.basename(fr.file) if fr.file else None)
 
         if len(names) != len(frames):
             stats.incomplete_stacks += 1
@@ -393,17 +486,16 @@ def expand_ranges() -> None:
         # Take MAX count for this position (not sum!)
         if pos_key not in position_max_counts or addr_count > position_max_counts[pos_key]:
             position_max_counts[pos_key] = addr_count
-
-            # Debug: track line 7
-
+            # Store source files: (root_source, [inline source files])
+            position_source_files[pos_key] = (root_source_file, source_files[1:])
 
     # Add positions to profile tree
     for pos_key, count in position_max_counts.items():
         root_name, path_tuple, leaf_off = pos_key
         path = list(path_tuple)
-        root = stats.root(root_name)
-        add_path(root, path, leaf_off, count, None)
-
+        root_source_file, inline_source_files = position_source_files[pos_key]
+        root = stats.root(root_name, root_source_file)
+        add_path(root, path, leaf_off, count, None, inline_source_files)
 
     #print(f"Probed {valid_address_probes} addresses from {len(stats.range_counts) - skipped_ranges} ranges")
     #print(f"Skipped {skipped_ranges} ranges with no debug info")
@@ -449,13 +541,18 @@ def add_branch_targets() -> None:
         if not sroot_name or not droot_name:
             continue
 
-        # Build source inline path
-        root = stats.root(sroot_name)
+        # Extract source files
+        sroot_source_file = os.path.basename(sframes[0].file) if sframes[0].file else None
+
+        # Build source inline path with source files
+        root = stats.root(sroot_name, sroot_source_file)
         names: list[str] = [sroot_name]
+        source_files: list[str | None] = []
         for fr in sframes[1:]:
             if not fr.sym:
                 break
             names.append(fr.sym)
+            source_files.append(os.path.basename(fr.file) if fr.file else None)
 
         if len(names) != len(sframes):
             continue
@@ -473,8 +570,9 @@ def add_branch_targets() -> None:
         # when it is needed to carry a qualifying target histogram.
         leaf_off = frame_offset(sframes[-1])
         node = root
-        for name, off in path:
-            node = node.child(off, name)
+        for i, (name, off) in enumerate(path):
+            src_file = source_files[i] if i < len(source_files) else None
+            node = node.child(off, name, src_file)
         node.positions.setdefault(leaf_off, 0)
         node.targets[leaf_off][target] += count
         added_targets += 1
@@ -543,20 +641,51 @@ def trace_end():
             print(path, "\t", count, "%.2f" % (float(count) / stats.raw_total_branches * 100. if stats.raw_total_branches else 0.0))
 
     # XXX multiple output files
-    string_table, string_index = gen_strtable(stats)
     update_branch_counts(stats)
 
     with open(args.gcov if args.gcov else args.output, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
-        w32(f, GCOV_VERSION)
+        w32(f, args.gcov_version)  # Write actual version from args
         w32(f, 0)
 
-        # write string table
+        # Write string table (version-specific)
         w32(f, GCOV_TAG_AFDO_FILE_NAMES)
-        w32(f, sum((len(s) + 5 for s in string_table)) + 4)
-        w32(f, len(string_table))
-        for fn in string_table:
-            wstring(f, fn)
+
+        if args.gcov_version == 2:
+            # Version 2: simple string list
+            string_table, string_index = gen_strtable(stats)
+            length = 4 + sum((len(s) + 5) for s in string_table)
+            w32(f, length)
+            w32(f, len(string_table))
+            for fn in string_table:
+                wstring(f, fn)
+
+        elif args.gcov_version == 3:
+            # Version 3: files + functions with indices
+            file_table, file_index, func_file_map, string_table, string_index = gen_strtable_v3(stats)
+
+            # Calculate length
+            length = 4  # num_filenames
+            length += sum(len(fname) + 5 for fname in file_table)
+            length += 4  # num_functions
+            length += sum(len(func) + 5 + 4 for func in string_table)
+
+            w32(f, length)
+
+            # Write file names
+            w32(f, len(file_table))
+            for fname in file_table:
+                wstring(f, fname)
+
+            # Write function names with file indices
+            w32(f, len(string_table))
+            for func_name in string_table:
+                wstring(f, func_name)
+                file_idx = func_file_map.get(func_name, -1)
+                w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)  # -1 as unsigned
+
+        else:
+            sys.exit(f"Unsupported GCOV version: {args.gcov_version}. Only versions 2 and 3 are supported. Use --gcov-version 2 or --gcov-version 3.")
 
         # write function profile
         w32(f, GCOV_TAG_AFDO_FUNCTION)
@@ -719,14 +848,13 @@ def process_event(param_dict):
         br, _ = focused_branches[i]
         prev_br, _ = focused_branches[i - 1]
 
-        # Range: current.to → previous.from
         begin = br["to"]
         end = prev_br["from"]
 
         # Validate range
         if end < begin:
             continue
-        if end - begin > (1 << 20):  # 1 MB limit
+        if end - begin > args.insn_range_max:
             continue
 
         stats.range_counts[(begin, end)] += 1
