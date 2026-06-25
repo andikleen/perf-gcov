@@ -66,7 +66,7 @@ if [ -f perf.data ]; then
 fi
 
 echo "Stream pipeline dump:"
-./dump.py --max-count 1000000 ${i}.stream.gcov
+./gcov-dump.py --max-count 1000000 ${i}.stream.gcov
 
 # Compile with the streamed profile
 $CC -g -O2 -fauto-profile=${i}.stream.gcov ${i}.c -o ${i}.stream.opt
@@ -76,7 +76,7 @@ echo "=== Testing gcov-stream-profile.sh (v3) ==="
 ./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov3 --gcov-version 3 -- ./${i}
 
 echo "v3 stream pipeline dump:"
-./dump.py ${i}.stream.gcov3
+./gcov-dump.py ${i}.stream.gcov3
 
 if check_gcc_v3_support ; then
 	echo "GCC 16+ detected, testing v3 stream profile with -fauto-profile"
@@ -101,7 +101,7 @@ $PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
 
 # Test v2 (default test, backward compatibility)
 $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
-./dump.py --max-count 1000000 ${i}.gcov
+./gcov-dump.py --max-count 1000000 ${i}.gcov
 if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
 fi
@@ -112,7 +112,7 @@ $CC -g -O2 -flto -fauto-profile=${i}.gcov ${sources} -o ${i}.opt
 echo "=== Testing GCOV v3 format ==="
 $PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-version 3
 echo "v3 dump:"
-./dump.py ${i}.gcov3 > ${i}.dump3
+./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
 
 if check_gcc_v3_support ; then
@@ -135,7 +135,7 @@ $PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
 
 # Test v2 (default test, backward compatibility)
 $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
-./dump.py --max-count 1000000 ${i}.gcov
+./gcov-dump.py --max-count 1000000 ${i}.gcov
 if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
 fi
@@ -146,7 +146,7 @@ $CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
 echo "=== Testing GCOV v3 format ==="
 $PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-version 3
 echo "v3 dump:"
-./dump.py ${i}.gcov3 > ${i}.dump3
+./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
 
 if check_gcc_v3_support ; then
