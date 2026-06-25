@@ -55,9 +55,10 @@ except ImportError:
 
 ap = argparse.ArgumentParser()
 ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
-ap.add_argument('--binary', help="Generate gcov file for binary")
+ap.add_argument('--binary', help="Generate gcov file for binary", required=True)
 ap.add_argument('--profile', '-i', help="Profile data. Default perf.data") # handled by perf
 ap.add_argument('--gcov', help="gcov output file")
+ap.add_argument('--profiler', help="set profiler type", choices=["perf"]) # for create_gcov compatibility. nop.
 ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
 ap.add_argument('--top', default=0, type=int, help="Print N top samples")
