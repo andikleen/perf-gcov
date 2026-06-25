@@ -386,7 +386,7 @@ def compute_summary(stats: Stats) -> dict:
     max_function_count = 0
     num_counts = 0
     num_functions = len(stats.tree)  # Count only top-level functions (matches AutoFDO)
-    count_frequencies = {}  # {count: frequency}
+    count_frequencies: dict[int, int] = {}  # {count: frequency}
 
     def traverse_node(node: FuncNode, is_root: bool = False) -> None:
         """Recursively traverse a node and its inlined children.
