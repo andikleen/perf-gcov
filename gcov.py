@@ -641,23 +641,25 @@ def add_branch_targets() -> None:
         if sframes is None or dframes is None:
             continue
 
-        # Determine if this is a call (different functions)
-        sinner = sframes[-1]
-        dinner = dframes[-1]
-        is_call = sinner.sym != dinner.sym
+        # Determine if this is a call (different root functions)
+        # Compare root (outermost) frames, not innermost frames.
+        # Innermost frames differ for any inline context change, but that's not a call.
+        sroot = sframes[0]
+        droot = dframes[0]
+        is_call = sroot.sym != droot.sym
 
         if not is_call:
             continue  # Not a call, skip
 
         # Get root names
-        sroot_name = sframes[0].sym
-        droot_name = dframes[0].sym
+        sroot_name = sroot.sym
+        droot_name = droot.sym
 
         if not sroot_name or not droot_name:
             continue
 
         # Extract source files
-        sroot_source_file = os.path.basename(sframes[0].file) if sframes[0].file else None
+        sroot_source_file = os.path.basename(sroot.file) if sroot.file else None
 
         # Build source inline path with source files
         root = stats.root(sroot_name, sroot_source_file)
@@ -677,7 +679,9 @@ def add_branch_targets() -> None:
             path.append((names[i], frame_offset(sframes[i - 1])))
 
         # Determine target name
-        target = droot_name if len(dframes) == 1 else (dinner.sym if dinner.sym else droot_name)
+        # Use innermost destination frame if available, otherwise root
+        dinner = dframes[-1]
+        target = dinner.sym if dinner.sym else droot_name
         if not target:
             continue
 

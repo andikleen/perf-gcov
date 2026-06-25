@@ -31,7 +31,7 @@ fi
 $CC -w -g -O2 -I/usr/include/csmith -o "$base" "$src"
 timeout 30 $PERF record -b -o "${base}.data" -c 10001 -e branches:ppu "./${base}" || true
 $PERF script -i "${base}.data" gcov.py "${base}.gcov" --binary "$base"
-./gcov-dump.py --max-count 1000000 "${base}.gcov" > "${base}.dump"
+./gcov-dump.py --max-count 50000000 "${base}.gcov" > "${base}.dump"
 
 if [ -n "$(type -p create_gcov)" ] ; then
     create_gcov -gcov_version 2 --binary "$base" --gcov "${base}.gcov2" --profile "${base}.data" 2>&1 | grep -v "WARNING:" || true

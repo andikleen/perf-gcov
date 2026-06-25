@@ -39,4 +39,4 @@ Differences to autofdo:
 
 Much less testing.
 
-The collection works on branches only which causes some differences in output.
+Some differences in output due to differences in dwarf parsing.
