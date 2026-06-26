@@ -20,14 +20,14 @@
 import os
 import sys
 from collections import Counter, defaultdict
-import struct
-from typing import BinaryIO, NamedTuple, Final, Any
+from typing import NamedTuple, Any, BinaryIO
 import argparse
 import itertools
 import os.path
 import subprocess
 import pathlib
 import backtrace
+from format import *
 
 ppath = os.getenv('PERF_EXEC_PATH')
 if ppath is None:
@@ -84,15 +84,6 @@ btstate = backtrace.createstate(args.binary)
 
 def trace_begin():
     pass
-
-GCOV_TAG_AFDO_SUMMARY = 0xa8000000
-GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
-GCOV_TAG_AFDO_FUNCTION = 0xac000000
-GCOV_TAG_AFDO_MODULE_GROUPING = 0xae000000
-GCOV_TAG_AFDO_WORKING_SET = 0xaf000000
-GCOV_DATA_MAGIC = 0x67636461 # 'gcda'
-GCOV_VERSION = 2
-HIST_TYPE_INDIR_CALL_TOPN = 7
 
 # One frame of an inline stack as returned by libbacktrace pcinfo.
 Frame = NamedTuple('Frame', [('file', str | None),
@@ -177,30 +168,6 @@ def get_frame_cache_stats() -> dict[str, int]:
         'memory': sum(len(frames) * 48 if frames else 0
                      for frames in _frame_cache.values())
     }
-
-def w32(f: BinaryIO, v: int):
-    try:
-        f.write(struct.pack("I", v))
-    except struct.error:
-        sys.exit("bad value for w32 %x" % v)
-
-def wstring(f: BinaryIO, s: str):
-    s += "\0"
-    w32(f, len(s))
-    f.write(struct.pack("%ds" % len(s), s.encode('utf-8')))
-
-def wcounter(f: BinaryIO, v: int):
-    w32(f, (v       ) & 0xffffffff)
-    w32(f, (v >> 32 ) & 0xffffffff)
-
-def gen_offset(line: int, disc: int) -> int:
-    """Generate 32-bit offset from line number and discriminator.
-
-    Format: bits [31:16] = line, bits [15:0] = discriminator.
-    Discriminator is masked to 16 bits (matching autofdo).
-    """
-    line = line & 0xFFFF if line < 0 else min(line, 0xFFFF)
-    return (line << 16) | (disc & 0xFFFF)
 
 class FuncNode:
     """A node in the profile tree.

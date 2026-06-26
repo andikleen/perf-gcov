@@ -1,51 +1,12 @@
 #!/usr/bin/env python3
-import struct
 import sys
 import argparse
+from format import *
 
 ap = argparse.ArgumentParser()
 ap.add_argument('gcovfile', type=argparse.FileType('rb'))
 ap.add_argument('--max-count', type=int, help="Error out if any count is larger than N")
 args = ap.parse_args()
-
-GCOV_TAG_AFDO_SUMMARY = 0xa8000000
-GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
-GCOV_TAG_AFDO_FUNCTION = 0xac000000
-GCOV_TAG_AFDO_MODULE_GROUPING = 0xae000000
-GCOV_TAG_AFDO_WORKING_SET = 0xaf000000
-GCOV_DATA_MAGIC = 0x67636461 # 'gcda'
-GCOV_VERSION = 2
-HIST_TYPE_INDIR_CALL_TOPN = 7
-
-def r32(f):
-    return struct.unpack("I", f.read(4))[0]
-
-def rstring(f):
-    l = r32(f)
-    s = f.read(l)
-    return struct.unpack("%ds" % l, s)[0].decode('utf-8')[:-1]
-
-def rcounter(f):
-    a = r32(f)
-    b = r32(f)
-    return a | (b << 32)
-
-def expect(what, val, exp):
-    if val != exp:
-        sys.exit("for %s expect %x got val %x" % (what, exp, val))
-
-def warn_expect(what, val, exp):
-    if val != exp:
-        print("for %s expect %x got val %x" % (what, exp, val))
-
-def check_counter(count):
-    if args.max_count and count > args.max_count:
-        sys.exit("count value %d larger than %d" % (count, args.max_count))
-
-def fmt_offset(offset):
-    if offset & 0xffff:
-        return "%d.%d" % (offset >> 16, offset & 0xffff)
-    return "%d" % (offset >> 16)
 
 f = args.gcovfile
 
@@ -55,13 +16,13 @@ def dump_pos(num_pos, callsites):
         num_targets = r32(f)
         counter = rcounter(f)
         print("  %s: %d" % (fmt_offset(offset), counter))
-        check_counter(counter)
+        check_counter(counter, args.max_count)
         for t in range(num_targets):
             expect("topn hist type", r32(f), HIST_TYPE_INDIR_CALL_TOPN)
             target = str_table[rcounter(f)]
             count = rcounter(f)
             print("    %s: %d" % (target, count))
-            check_counter(count)
+            check_counter(count, args.max_count)
     for i in range(callsites):
         offset = r32(f)
         name = str_table[r32(f)]
@@ -164,7 +125,7 @@ for i in range(num_funcs):
         print("%s: %d  (timestamp %d)" % (fname, head, ts))
     else:
         print("%s: %d" % (fname, head))
-    check_counter(head)
+    check_counter(head, args.max_count)
     num_pos = r32(f)
     callsites = r32(f)
     dump_pos(num_pos, callsites)
