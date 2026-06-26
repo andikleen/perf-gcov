@@ -15,7 +15,6 @@
 # check buildid
 # output multiple gcovs
 # support online mode
-# implement suffix elision policy for .
 
 import os
 import sys
@@ -27,6 +26,7 @@ import os.path
 import subprocess
 import pathlib
 import backtrace
+import suffix
 from format import *
 
 ppath = os.getenv('PERF_EXEC_PATH')
@@ -74,6 +74,9 @@ ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], de
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
 ap.add_argument('--insn-range-max', type=int, default=1<<20, help="Max range between branches to probe")
+ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
+                help="Symbol suffix elision policy (default: %(default)s)")
+
 args = ap.parse_args()
 
 if args.binary is None:
@@ -775,6 +778,8 @@ def trace_end():
     # Add DWARF-informed zero scaffolding for function boundaries
     add_dwarf_zero_scaffolding()
 
+    suffix.elide_tree_suffixes(stats.tree, args.suffix_elision)
+
     if args.top > 0:
         entries: list[tuple[str, int]] = []
         for name, node in stats.tree.items():
@@ -921,23 +926,7 @@ def frame_offset(fr: Frame) -> int:
         line = 0
     return gen_offset(line, fr.disc)
 
-def sym_name(bsym: str, frame_sym: str | None) -> str:
-    # prefer the symbol-table name from perf; fall back to the frame's
-    # function name from debug info.
-    if bsym and "+" in bsym:
-        return bsym.split("+")[0]
-    if bsym:
-        return bsym
-    return frame_sym if frame_sym else ""
 
-def is_lto_symbol(sym_name: str) -> tuple[bool, str | None]:
-    """Check if symbol is an LTO-privatized variant.
-
-    LTO creates .lto_priv.N suffixes for privatized functions."""
-    if '.lto_priv.' in sym_name:
-        base_name = sym_name.split('.lto_priv.')[0]
-        return (True, base_name)
-    return (False, None)
 
 def process_event(param_dict):
     """Process LBR branch stack to build range_counts and branch_counts.

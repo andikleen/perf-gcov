@@ -8,8 +8,9 @@ import argparse
 from collections import Counter, defaultdict
 from typing import BinaryIO
 from format import *
+import suffix
 
-class MFNode:
+class FuncNode:
     """A node in the profile tree, matching GCOV_TAG_AFDO_FUNCTION layout."""
 
     __slots__ = ("name", "source_file", "positions", "targets",
@@ -21,17 +22,17 @@ class MFNode:
         self.source_file = source_file
         self.positions: Counter[int] = Counter()
         self.targets: dict[int, Counter[str]] = defaultdict(Counter)
-        self.children: dict[tuple[int, str], "MFNode"] = {}
+        self.children: dict[tuple[int, str], "FuncNode"] = {}
         self.head_count = head_count
         self.total_count = 0
         self.timestamp = timestamp
 
     def child(self, offset: int, name: str,
-              source_file: str | None = None) -> "MFNode":
+              source_file: str | None = None) -> "FuncNode":
         key = (offset, name)
         node = self.children.get(key)
         if node is None:
-            node = MFNode(name, source_file)
+            node = FuncNode(name, source_file)
             self.children[key] = node
         elif source_file and not node.source_file:
             node.source_file = source_file
@@ -53,7 +54,7 @@ def _skip_section(f: BinaryIO) -> None:
     if length > 0:
         f.read(length)
 
-def read_profile(path: str) -> tuple[dict[str, MFNode], int]:
+def read_profile(path: str) -> tuple[dict[str, FuncNode], int]:
     """Read a gcov file and return (tree, version)."""
     try:
         f: BinaryIO = open(path, "rb")
@@ -120,7 +121,7 @@ def _read_function_section(f: BinaryIO, names, file_table, version, path):
     _expect_tag(f, path, GCOV_TAG_AFDO_FUNCTION, "AFDO function tag")
     r32(f)  # length
     num_functions = r32(f)
-    tree: dict[str, MFNode] = {}
+    tree: dict[str, FuncNode] = {}
     for _ in range(num_functions):
         _read_function_instance(f, tree, names, file_table, version, path)
     return tree
@@ -149,7 +150,7 @@ def _read_function_instance(f: BinaryIO, tree, names, file_table, version, path,
     if is_toplevel:
         node = tree.get(name)
         if node is None:
-            node = MFNode(name, source_file, head_count, timestamp)
+            node = FuncNode(name, source_file, head_count, timestamp)
             tree[name] = node
         else:
             node.head_count += head_count
@@ -195,8 +196,8 @@ def _read_working_set(f: BinaryIO, path: str) -> None:
         print(f"warning: {path}: unexpected tag 0x{tag:08x} where working set expected",
               file=sys.stderr)
 
-def merge_profiles(dest: dict[str, MFNode],
-                   src: dict[str, MFNode]) -> None:
+def merge_profiles(dest: dict[str, FuncNode],
+                   src: dict[str, FuncNode]) -> None:
     """Merge src tree into dest tree. Sums counts (AFDO merge semantics)."""
     for name, src_node in src.items():
         dest_node = dest.get(name)
@@ -205,28 +206,14 @@ def merge_profiles(dest: dict[str, MFNode],
         else:
             _merge_node(dest_node, src_node)
 
-def _merge_node(dest: MFNode, src: MFNode) -> None:
+def _merge_node(dest: FuncNode, src: FuncNode) -> None:
     dest.head_count += src.head_count
     dest.total_count += src.total_count
-
     if src.source_file and not dest.source_file:
         dest.source_file = src.source_file
+    merge_nodes(dest, src)
 
-    for off, count in src.positions.items():
-        dest.positions[off] += count
-
-    for off, src_targets in src.targets.items():
-        for tgt, tgt_count in src_targets.items():
-            dest.targets[off][tgt] += tgt_count
-
-    for key, src_child in src.children.items():
-        dest_child = dest.children.get(key)
-        if dest_child is None:
-            dest.children[key] = copy.deepcopy(src_child)
-        else:
-            _merge_node(dest_child, src_child)
-
-def filtered_positions(node: MFNode,
+def filtered_positions(node: FuncNode,
                         threshold: int) -> list[tuple[int, int, Counter[str]]]:
     result = []
     for off in sorted(node.positions):
@@ -239,24 +226,24 @@ def filtered_positions(node: MFNode,
         result.append((off, count, targets))
     return result
 
-def emitted_children(node: MFNode, threshold: int
-                      ) -> list[tuple[int, str, MFNode]]:
+def emitted_children(node: FuncNode, threshold: int
+                      ) -> list[tuple[int, str, FuncNode]]:
     return [(coff, cname, child)
             for (coff, cname), child in sorted(node.children.items())
             if child.has_output(threshold)]
 
 
-def collect_strings(node: MFNode, out: set[str], threshold: int) -> None:
+def collect_strings(node: FuncNode, out: set[str], threshold: int) -> None:
     out.add(node.name)
     for _, _, targets in filtered_positions(node, threshold):
         out.update(targets.keys())
     for _, _, child in emitted_children(node, threshold):
         collect_strings(child, out, threshold)
 
-def collect_strings_v3(node: MFNode, func_names: set[str],
+def collect_strings_v3(node: FuncNode, func_names: set[str],
                         files: set[str],
                         func_to_file: dict[str, str | None],
-                        tree: dict[str, MFNode], threshold: int) -> None:
+                        tree: dict[str, FuncNode], threshold: int) -> None:
     func_names.add(node.name)
     if node.source_file:
         files.add(node.source_file)
@@ -277,7 +264,7 @@ def collect_strings_v3(node: MFNode, func_names: set[str],
         collect_strings_v3(child, func_names, files, func_to_file, tree,
                            threshold)
 
-def wfunc_node(f: BinaryIO, node: MFNode, offset: int,
+def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
                string_index: dict[str, int], toplevel: bool,
                gcov_version: int, threshold: int) -> None:
     if toplevel:
@@ -308,7 +295,7 @@ def wfunc_node(f: BinaryIO, node: MFNode, offset: int,
         wfunc_node(f, child, coff, string_index, False,
                    gcov_version, threshold)
 
-def gen_strtable(tree: dict[str, MFNode],
+def gen_strtable(tree: dict[str, FuncNode],
                  threshold: int) -> tuple[list[str], dict[str, int]]:
     strings: set[str] = set()
     for node in tree.values():
@@ -318,7 +305,7 @@ def gen_strtable(tree: dict[str, MFNode],
     return string_table, string_index
 
 
-def gen_strtable_v3(tree: dict[str, MFNode], threshold: int):
+def gen_strtable_v3(tree: dict[str, FuncNode], threshold: int):
     source_files: set[str] = set()
     function_names: set[str] = set()
     func_to_file: dict[str, str | None] = {}
@@ -345,7 +332,7 @@ def gen_strtable_v3(tree: dict[str, MFNode], threshold: int):
 
     return file_table, file_index, func_file_map, string_table, string_index
 
-def compute_summary(tree: dict[str, MFNode]) -> dict:
+def compute_summary(tree: dict[str, FuncNode]) -> dict:
     total_count = 0
     max_count = 0
     max_function_count = 0
@@ -353,7 +340,7 @@ def compute_summary(tree: dict[str, MFNode]) -> dict:
     num_functions = len(tree)
     count_frequencies: dict[int, int] = {}
 
-    def traverse_node(node: MFNode, is_root: bool = False) -> None:
+    def traverse_node(node: FuncNode, is_root: bool = False) -> None:
         nonlocal total_count, max_count, max_function_count, num_counts
 
         if is_root and 0 in node.positions:
@@ -426,7 +413,7 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
         wcounter(f, ds['min_count'])
         wcounter(f, ds['num_counts'])
 
-def write_profile(path: str, tree: dict[str, MFNode],
+def write_profile(path: str, tree: dict[str, FuncNode],
                   gcov_version: int, threshold: int) -> None:
     if not tree:
         sys.exit(f"error: no functions to write (empty tree)")
@@ -493,13 +480,16 @@ def main() -> None:
                     help="Output gcov version (default: 3)")
     ap.add_argument('--threshold', type=int, default=10,
                     help="Min samples for a position to be emitted (default: 10)")
+    ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES,
+                    default='all',
+                    help="Suffix elision policy (default: %(default)s)")
     args = ap.parse_args()
 
     if len(args.input_files) < 1:
         sys.exit("error: need at least one input file")
 
     versions = set()
-    trees: list[tuple[str, dict[str, MFNode]]] = []
+    trees: list[tuple[str, dict[str, FuncNode]]] = []
     for path in args.input_files:
         tree, ver = read_profile(path)
         versions.add(ver)
@@ -512,6 +502,7 @@ def main() -> None:
     for src_path, src_tree in trees[1:]:
         merge_profiles(dest, src_tree)
 
+    suffix.elide_tree_suffixes(dest, args.suffix_elision)
     write_profile(args.output, dest, args.gcov_version, args.threshold)
     print(f"Merged {len(trees)} profiles, {len(dest)} functions -> {args.output}")
 

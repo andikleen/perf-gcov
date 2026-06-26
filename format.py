@@ -2,6 +2,7 @@
 # Shared GCOV format constants and I/O helpers for perf-gcov tools
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import copy
 import struct
 import sys
 from typing import BinaryIO
@@ -82,6 +83,25 @@ def fmt_offset(offset: int) -> str:
     if offset & 0xffff:
         return "%d.%d" % (offset >> 16, offset & 0xffff)
     return "%d" % (offset >> 16)
+
+
+def merge_nodes(dest, src) -> None:
+    """Merge src node's positions, targets, and children into dest.
+
+    Handles the common subset shared by all FuncNode-like trees:
+    positions (Counter), targets (dict[int, Counter[str]]), children.
+    """
+    for off, count in src.positions.items():
+        dest.positions[off] += count
+    for off, src_targets in src.targets.items():
+        for tgt, tgt_count in src_targets.items():
+            dest.targets[off][tgt] += tgt_count
+    for key, src_child in src.children.items():
+        dest_child = dest.children.get(key)
+        if dest_child is None:
+            dest.children[key] = copy.deepcopy(src_child)
+        else:
+            merge_nodes(dest_child, src_child)
 
 
 def write_gcov_tail(f: BinaryIO) -> None:
