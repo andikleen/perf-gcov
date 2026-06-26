@@ -338,7 +338,8 @@ def gen_strtable(stats: Stats):
     strings: set[str] = set()
     for node in stats.tree.values():
         collect_strings(node, strings)
-    string_table = sorted(strings)
+    # Index 0 must be empty (reserved by GCC)
+    string_table = [""] + sorted(strings)
     string_index = { name: i for i, name in enumerate(string_table) }
     return string_table, string_index
 
@@ -375,8 +376,8 @@ def gen_strtable_v3(stats: Stats):
         else:
             func_file_map[func_name] = -1  # No file info
 
-    # Build string table
-    string_table = sorted(function_names)
+    # Build string table (index 0 must be empty, reserved by GCC)
+    string_table = [""] + sorted(function_names)
     string_index = {name: i for i, name in enumerate(string_table)}
 
     return file_table, file_index, func_file_map, string_table, string_index
