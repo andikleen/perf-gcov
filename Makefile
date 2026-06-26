@@ -36,7 +36,7 @@ clean:
 		$(TESTS)
 
 typecheck:
-	mypy gcov.py gcov-dump.py format.py --check-untyped-defs
+	mypy gcov.py gcov-dump.py format.py profile-merger.py --check-untyped-defs
 
 test:
 	./tester

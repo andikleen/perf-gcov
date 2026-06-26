@@ -13,6 +13,10 @@ GCOV_TAG_AFDO_MODULE_GROUPING = 0xae000000
 GCOV_TAG_AFDO_WORKING_SET = 0xaf000000
 GCOV_DATA_MAGIC = 0x67636461  # 'gcda'
 HIST_TYPE_INDIR_CALL_TOPN = 7
+DEFAULT_CUTOFFS = [
+    10000, 100000, 200000, 300000, 400000, 500000, 600000, 700000,
+    800000, 900000, 950000, 990000, 999000, 999900, 999990, 999999,
+]
 
 
 def w32(f: BinaryIO, v: int) -> None:
@@ -78,3 +82,13 @@ def fmt_offset(offset: int) -> str:
     if offset & 0xffff:
         return "%d.%d" % (offset >> 16, offset & 0xffff)
     return "%d" % (offset >> 16)
+
+
+def write_gcov_tail(f: BinaryIO) -> None:
+    w32(f, GCOV_TAG_AFDO_MODULE_GROUPING)
+    w32(f, 4)
+    w32(f, 0)
+
+    w32(f, GCOV_TAG_AFDO_WORKING_SET)
+    w32(f, 4)
+    w32(f, 0)

@@ -348,13 +348,6 @@ def compute_summary(stats: Stats) -> dict:
     - Count only top-level functions in num_functions
     - Use cumulative percentile histogram (persistent state across cutoffs)
     """
-    # Default percentile cutoffs
-    # These are in parts per million: 10000 = 1%, 100000 = 10%, etc.
-    DEFAULT_CUTOFFS = [
-        10000, 100000, 200000, 300000, 400000, 500000, 600000, 700000,
-        800000, 900000, 950000, 990000, 999000, 999900, 999990, 999999
-    ]
-
     total_count = 0
     max_count = 0
     max_function_count = 0
@@ -856,14 +849,7 @@ def trace_end():
             w32(f, endoff - lenoff)
             f.seek(endoff, 0)
 
-        # not used by gcc
-        w32(f, GCOV_TAG_AFDO_MODULE_GROUPING)
-        w32(f, 4)
-        w32(f, 0)
-
-        w32(f, GCOV_TAG_AFDO_WORKING_SET)
-        w32(f, 4)
-        w32(f, 0)
+        write_gcov_tail(f)
 
     print("%d processed branches, %d output branches, %.2f%% ignored" %
           (stats.output_total_positions,
