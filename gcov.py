@@ -122,6 +122,12 @@ class Stats:
         # from_sym and to_sym are symbol names from perf
         self.branch_counts: Counter[tuple[tuple[int, int], str | None, str | None]] = Counter()
 
+        # Timestamp tracking: first sample time per function
+        # Address -> first sample timestamp (nanoseconds)
+        self.first_address_time: dict[int, int] = {}
+        # Root function name -> first sample timestamp
+        self.func_timestamp: dict[str, int] = {}
+
         # Error/skip counters for diagnostics
         self.dwarf_lookup_failures = 0  # Addresses with no DWARF info
         self.missing_symbols = 0         # Frames with no symbol name
@@ -302,6 +308,9 @@ def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
                string_index: dict[str, int], toplevel: bool) -> None:
     if toplevel:
         wcounter(f, node.head_count())
+        if args.gcov_version >= 3:
+            ts = stats.func_timestamp.get(node.name, 0)
+            wcounter(f, ts)  # first sample timestamp (nanoseconds)
         w32(f, string_index[node.name])
     else:
         w32(f, offset)
@@ -599,6 +608,11 @@ def expand_ranges() -> None:
             root_name = root_frame.sym
         root_source_file = os.path.basename(root_frame.file) if root_frame.file else None
 
+        # Propagate first sample timestamp to root function
+        addr_time = stats.first_address_time.get(addr)
+        if addr_time and root_name not in stats.func_timestamp:
+            stats.func_timestamp[root_name] = addr_time
+
         names: list[str] = [root_name]
         source_files: list[str | None] = [root_source_file]
         for fr in frames[1:]:
@@ -722,6 +736,12 @@ def add_branch_targets() -> None:
         path: list[tuple[str, int]] = []
         for i in range(1, len(sframes)):
             path.append((names[i], frame_offset(sframes[i - 1])))
+
+        # Record timestamp for target function if not already set
+        if droot_name and droot_name not in stats.func_timestamp:
+            branch_time = stats.first_address_time.get(from_addr)
+            if branch_time:
+                stats.func_timestamp[droot_name] = branch_time
 
         # Determine target name - use the symbol we already resolved above
         # (either from perf or DWARF). If for some reason it's not set,
@@ -1020,6 +1040,13 @@ def process_event(param_dict):
 
     if len(focused_branches) == 0:
         return
+
+    # Track first sample timestamp per address (like autofdo)
+    sample_time = param_dict.get("sample", {}).get("time", 0)
+    if sample_time:
+        for br, _ in focused_branches:
+            stats.first_address_time.setdefault(br["from"], sample_time)
+            stats.first_address_time.setdefault(br["to"], sample_time)
 
     # Store branch counts with symbols from perf
     for br, bsym in focused_branches:
