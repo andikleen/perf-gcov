@@ -837,7 +837,8 @@ def trace_end():
     # XXX multiple output files
     update_branch_counts(stats)
 
-    with open(args.gcov if args.gcov else args.output, "wb") as f:
+    gcov_output = args.gcov if args.gcov else args.output
+    with open(gcov_output, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
         w32(f, args.gcov_version)  # Write actual version from args
         w32(f, 0)
@@ -883,9 +884,6 @@ def trace_end():
                 wstring(f, func_name)
                 file_idx = func_file_map.get(func_name, -1)
                 w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)  # -1 as unsigned
-
-        else:
-            sys.exit(f"Unsupported GCOV version: {args.gcov_version}. Only versions 2 and 3 are supported. Use --gcov-version 2 or --gcov-version 3.")
 
         # write function profile
         w32(f, GCOV_TAG_AFDO_FUNCTION)
