@@ -109,10 +109,12 @@ class Stats:
         # outermost function name -> profile tree root
         self.tree : dict[str, "FuncNode"] = dict()
         # Range-based profile data (LBR-derived ranges)
-        # (begin_addr, end_addr) -> count
-        self.range_counts: Counter[tuple[int, int]] = Counter()
-        # (from_addr, to_addr) -> count
-        self.branch_counts: Counter[tuple[int, int]] = Counter()
+        # ((begin_addr, end_addr), begin_sym) -> count
+        # begin_sym is the symbol name from perf for the begin address
+        self.range_counts: Counter[tuple[tuple[int, int], str | None]] = Counter()
+        # ((from_addr, to_addr), from_sym, to_sym) -> count
+        # from_sym and to_sym are symbol names from perf
+        self.branch_counts: Counter[tuple[tuple[int, int], str | None, str | None]] = Counter()
 
         # Error/skip counters for diagnostics
         self.dwarf_lookup_failures = 0  # Addresses with no DWARF info
@@ -375,7 +377,7 @@ def compute_summary(stats: Stats) -> dict:
     - Count only top-level functions in num_functions
     - Use cumulative percentile histogram (persistent state across cutoffs)
     """
-    # Default percentile cutoffs (from AutoFDO)
+    # Default percentile cutoffs
     # These are in parts per million: 10000 = 1%, 100000 = 10%, etc.
     DEFAULT_CUTOFFS = [
         10000, 100000, 200000, 300000, 400000, 500000, 600000, 700000,
@@ -386,7 +388,7 @@ def compute_summary(stats: Stats) -> dict:
     max_count = 0
     max_function_count = 0
     num_counts = 0
-    num_functions = len(stats.tree)  # Count only top-level functions (matches AutoFDO)
+    num_functions = len(stats.tree)  # Count only top-level functions
     count_frequencies: dict[int, int] = {}  # {count: frequency}
 
     def traverse_node(node: FuncNode, is_root: bool = False) -> None:
@@ -395,7 +397,6 @@ def compute_summary(stats: Stats) -> dict:
         nonlocal total_count, max_count, max_function_count, num_counts
 
         # For root nodes, track function entry count (offset 0)
-        # This matches AutoFDO's VisitTopSymbol which tracks node->head_count
         if is_root and 0 in node.positions:
             func_head_count = node.positions[0]
             max_function_count = max(max_function_count, func_head_count)
@@ -410,7 +411,6 @@ def compute_summary(stats: Stats) -> dict:
                 count_frequencies[count] = count_frequencies.get(count, 0) + 1
 
         # Recursively traverse inlined children (callsites)
-        # This matches AutoFDO's Traverse which iterates node->callsites
         for (call_offset, callee_name), child in node.children.items():
             traverse_node(child, is_root=False)
 
@@ -419,11 +419,6 @@ def compute_summary(stats: Stats) -> dict:
         traverse_node(func_node, is_root=True)
 
     # Compute detailed summaries (percentile histogram)
-    # This follows AutoFDO's ComputeDetailedSummary algorithm:
-    # - Sort counts descending (hottest first)
-    # - Iterate cutoffs ascending (1%, 10%, 20%, ...)
-    # - Use PERSISTENT state (cumulative histogram)
-    # - ALWAYS write 16 entries
     detailed_summaries = []
     if total_count > 0 and count_frequencies:
         # Sort counts in descending order (hottest first)
@@ -454,7 +449,7 @@ def compute_summary(stats: Stats) -> dict:
                 'num_counts': cumulative_samples
             })
     else:
-        # Empty or zero-count profile: write 16 zero entries (matches AutoFDO)
+        # Empty or zero-count profile: write 16 zero entries
         detailed_summaries = [
             {'cutoff': cutoff, 'min_count': 0, 'num_counts': 0}
             for cutoff in DEFAULT_CUTOFFS
@@ -536,8 +531,9 @@ def expand_ranges() -> None:
 
     if args.verbose:
         print("\nRange counts:")
-        for (begin, end), count in sorted(stats.range_counts.items()):
-            print(f"  [{begin:x}-{end:x}]: count={count}")
+        for (begin, end), sym in stats.range_counts.keys():
+            count = stats.range_counts[((begin, end), sym)]
+            print(f"  [{begin:x}-{end:x}] ({sym}): count={count}")
 
     # Count of valid address probes (addresses that yielded DWARF info)
     # Note: this is total probes, not unique addresses (an address can be probed by multiple ranges)
@@ -546,11 +542,13 @@ def expand_ranges() -> None:
 
     # First, build address_count_map by iterating all ranges
     # Multiple ranges can contribute to the same address (they accumulate)
+    # Also track the symbol name from perf for each address
     address_counts: dict[int, int] = defaultdict(int)
+    address_symbols: dict[int, str | None] = {}
 
-    for (begin, end), range_count in stats.range_counts.items():
+    for ((begin, end), range_sym), range_count in stats.range_counts.items():
         range_has_data = False
-        for addr in range(begin, end):
+        for addr in range(begin, end + 1):
             frames = getframes_cached(addr)
             if frames is None:
                 continue
@@ -560,6 +558,9 @@ def expand_ranges() -> None:
 
             # Add range count to this address
             address_counts[addr] += range_count
+            # Store symbol name from perf (prefer first seen, but any is fine for same address)
+            if addr not in address_symbols:
+                address_symbols[addr] = range_sym
 
         if not range_has_data:
             skipped_ranges += 1
@@ -582,7 +583,14 @@ def expand_ranges() -> None:
             stats.missing_symbols += 1
             continue
 
-        root_name = root_frame.sym
+        # Use symbol name from perf if available (includes .lto_priv.N suffixes).
+        # This is more accurate than DWARF names for LTO-optimized code.
+        # Fall back to DWARF symbol name if perf didn't provide one.
+        perf_sym = address_symbols.get(addr)
+        if perf_sym and root_frame.sym in perf_sym:
+            root_name = perf_sym
+        else:
+            root_name = root_frame.sym
         root_source_file = os.path.basename(root_frame.file) if root_frame.file else None
 
         names: list[str] = [root_name]
@@ -617,6 +625,20 @@ def expand_ranges() -> None:
         path = list(path_tuple)
         root_source_file, inline_source_files = position_source_files[pos_key]
         root = stats.root(root_name, root_source_file)
+
+        # If this is an inline context, also add count to root function's position
+        # at the first inline call site.
+        if len(path) > 0:
+            # path[0] is (inlined_function_name, call_offset_in_root)
+            root_call_offset = path[0][1]
+            # Use MAX (not +=) to match our position aggregation strategy
+            if root_call_offset in root.positions:
+                root.positions[root_call_offset] = max(
+                    root.positions[root_call_offset], count
+                )
+            else:
+                root.positions[root_call_offset] = count
+
         add_path(root, path, leaf_off, count, None, inline_source_files)
 
     #print(f"Probed {valid_address_probes} addresses from {len(stats.range_counts) - skipped_ranges} ranges")
@@ -641,7 +663,7 @@ def add_branch_targets() -> None:
     print(f"Adding call targets from {len(stats.branch_counts)} branches...")
     added_targets = 0
 
-    for (from_addr, to_addr), count in stats.branch_counts.items():
+    for ((from_addr, to_addr), from_sym, to_sym), count in stats.branch_counts.items():
         sframes = getframes_cached(from_addr)
         dframes = getframes_cached(to_addr)
 
@@ -658,11 +680,21 @@ def add_branch_targets() -> None:
         if not is_call:
             continue  # Not a call, skip
 
-        # Get root names
-        sroot_name = sroot.sym
-        droot_name = droot.sym
+        # Get root names from perf symbols (includes .lto_priv.N)
+        # Fall back to DWARF names if perf didn't provide symbols
+        if from_sym and sroot.sym and sroot.sym in from_sym:
+            sroot_name: str = from_sym
+        elif sroot.sym:
+            sroot_name = sroot.sym
+        else:
+            continue
 
-        if not sroot_name or not droot_name:
+        # For target name, prefer perf symbol, fall back to DWARF
+        if to_sym and droot.sym and droot.sym in to_sym:
+            droot_name = to_sym
+        elif droot.sym:
+            droot_name = droot.sym
+        else:
             continue
 
         # Extract source files
@@ -685,12 +717,12 @@ def add_branch_targets() -> None:
         for i in range(1, len(sframes)):
             path.append((names[i], frame_offset(sframes[i - 1])))
 
-        # Determine target name
-        # Use innermost destination frame if available, otherwise root
-        dinner = dframes[-1]
-        target = dinner.sym if dinner.sym else droot_name
-        if not target:
+        # Determine target name - use the symbol we already resolved above
+        # (either from perf or DWARF). If for some reason it's not set,
+        # fall back to innermost DWARF frame.
+        if not droot_name:
             continue
+        target = droot_name
 
         # Add target at source position. Materialize a zero-count position only
         # when it is needed to carry a qualifying target histogram.
@@ -932,6 +964,15 @@ def sym_name(bsym: str, frame_sym: str | None) -> str:
         return bsym
     return frame_sym if frame_sym else ""
 
+def is_lto_symbol(sym_name: str) -> tuple[bool, str | None]:
+    """Check if symbol is an LTO-privatized variant.
+
+    LTO creates .lto_priv.N suffixes for privatized functions."""
+    if '.lto_priv.' in sym_name:
+        base_name = sym_name.split('.lto_priv.')[0]
+        return (True, base_name)
+    return (False, None)
+
 def process_event(param_dict):
     """Process LBR branch stack to build range_counts and branch_counts.
 
@@ -974,20 +1015,23 @@ def process_event(param_dict):
     if len(focused_branches) == 0:
         return
 
-    for br, _ in focused_branches:
-        stats.branch_counts[(br["from"], br["to"])] += 1
+    # Store branch counts with symbols from perf
+    for br, bsym in focused_branches:
+        from_sym = bsym.get("from", "").split("+")[0] if "+" in bsym.get("from", "") else None
+        to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
+        stats.branch_counts[((br["from"], br["to"]), from_sym, to_sym)] += 1
 
     if len(focused_branches) < 2:
         # Need at least 2 entries to form a range, but still keep branch samples.
         return
 
-    # Build range_counts and branch_counts from adjacent LBR entries
+    # Build range_counts from adjacent LBR entries
     # LBR ordering: entries are from most recent (index 0) to oldest
     # Range construction: current.to → previous.from represents execution
 
     for i in range(1, len(focused_branches)):
-        br, _ = focused_branches[i]
-        prev_br, _ = focused_branches[i - 1]
+        br, bsym = focused_branches[i]
+        prev_br, prev_bsym = focused_branches[i - 1]
 
         begin = br["to"]
         end = prev_br["from"]
@@ -998,4 +1042,6 @@ def process_event(param_dict):
         if end - begin > args.insn_range_max:
             continue
 
-        stats.range_counts[(begin, end)] += 1
+        # Extract symbol name from the begin address (br["to"])
+        to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
+        stats.range_counts[((begin, end), to_sym)] += 1
