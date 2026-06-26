@@ -434,7 +434,6 @@ def compute_summary(stats: Stats) -> dict:
 
         for cutoff in DEFAULT_CUTOFFS:
             # Calculate threshold: what cumulative count represents this percentile?
-            # AutoFDO uses uint128_t to avoid overflow, but Python handles arbitrary precision
             # Note: cutoff is in parts per million (10000 = 1%, 1000000 = 100%)
             threshold = (total_count * cutoff) // 1_000_000
             last_count = 0
