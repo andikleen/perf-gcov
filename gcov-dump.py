@@ -157,8 +157,13 @@ num_funcs = r32(f)
 print("num functions %d" % num_funcs)
 for i in range(num_funcs):
     head = rcounter(f)
+    if version >= 3:
+        ts = rcounter(f)  # timestamp (v3 only)
     fname = str_table[r32(f)]
-    print("%s: %d" % (fname, head))
+    if version >= 3 and ts:
+        print("%s: %d  (timestamp %d)" % (fname, head, ts))
+    else:
+        print("%s: %d" % (fname, head))
     check_counter(head)
     num_pos = r32(f)
     callsites = r32(f)
