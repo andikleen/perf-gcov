@@ -1,7 +1,8 @@
 # makefile for backtrace python extension module
 # could use the python build system instead
+PERF = perf
 # use the python version that perf is built with
-CONFIG := python3.14-config
+CONFIG := $(shell ldd `which ${PERF}` |grep -o 'libpython....'|sed -e s/lib// -e 1q)-config
 # can be gccbuilddir/libbacktrace
 # otherwise copy libbacktrace.a here first
 BACKTRACESRC := .
