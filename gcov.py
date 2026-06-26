@@ -194,25 +194,13 @@ def wcounter(f: BinaryIO, v: int):
     w32(f, (v >> 32 ) & 0xffffffff)
 
 def gen_offset(line: int, disc: int) -> int:
-    """Generate 64-bit offset from line number and discriminator.
+    """Generate 32-bit offset from line number and discriminator.
 
-    Format: bits [63:16] = line, bits [15:0] = discriminator
-
-    Args:
-        line: Relative line number (0-65535)
-        disc: Discriminator value (0-65535)
-
-    Returns:
-        32-bit offset value (line << 16 | disc)
-
-    Raises:
-        ValueError: If line or disc out of valid range
+    Format: bits [31:16] = line, bits [15:0] = discriminator.
+    Discriminator is masked to 16 bits (matching autofdo).
     """
-    if not (0 <= line <= 0xFFFF):
-        raise ValueError(f"Line {line} out of range [0, 65535]")
-    if not (0 <= disc <= 0xFFFF):
-        raise ValueError(f"Discriminator {disc} out of range [0, 65535]")
-    return (line << 16) | disc
+    line = line & 0xFFFF if line < 0 else min(line, 0xFFFF)
+    return (line << 16) | (disc & 0xFFFF)
 
 class FuncNode:
     """A node in the profile tree.
