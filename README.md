@@ -12,7 +12,7 @@ Eventual goal is to support an online modus that supports contiguous profiling o
 and then rebuilding pieces with profile feedback. Right now it is just simpler to build
 than autofdo and uses a lot less memory and disk space (if used in streaming mode)
 
-# Setup
+## Setup
 
 Build a gcc with the patch in https://github.com/andikleen/gcc/tree/libbacktrace-disc-8
 
@@ -34,7 +34,7 @@ make
 Then gcov.py or gcov-stream-profile.sh can be executed without installation.
 
 
-# Synopsis
+## Synopsis
 
 ```
 gcc -O2 -o workload ...
@@ -53,23 +53,23 @@ gcc -fauto-profile=workload.gcov -o workload.opt -O2 ...
 
 The streaming variant does not write the temporary sample data to disk.
 
-The default output is gcov_version 3 for gcc 16+. If you use gcc 15 or older add --gcov-version 2
+The default output is gcov-version 3 for gcc 16+. If you use gcc 15 or older add --gcov-version 2
 
-The gcov.py script is (mostly) argument compatible to autofdo's create_gcov, so can be used as a replacement.
-For example to build gcc profiled with perf-gcov use
+The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so can be used as a replacement.
 
-```
-configure ...
-make autoprofiledbootstrap CREATE_GCOV=/path/to/gcov.py
-```
+## Tools
+- gcov.py - convert perf.data to autofdo gcov files
+- profile-merger.py - merge multiple gcov files together
+- dump-gcov.py - dump a autofdo gcov file
+- gcov-stream-profile.sh - script to profile and generate gcov without temporary files
 
 ## Differences to autofdo
 
-* Simpler to build.
-* Much less testing.
-* Some differences in output due to differences in dwarf parsing.
-* Much less memory use for large dumps.
-* Supports streaming mode to not save individual samples to disk.
-* Integrated into perf so no compatibility issues.
-* Orders of magnitude simpler (but only focussed on the gcc job)
+- Simpler to build.
+- Much less testing.
+- Some differences in output due to differences in dwarf parsing.
+- Much less memory use for large dumps.
+- Supports streaming mode to not save individual samples to disk.
+- Integrated into perf so no compatibility issues.
+- Much simpler (but only focussed on the gcc job)
 
