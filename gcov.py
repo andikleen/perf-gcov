@@ -37,12 +37,18 @@ if ppath is None:
     if len(sys.argv) == 1:
         sys.exit("Usage: gcov.py --gcov gcovfile --profile perf.data --binary elfbinary")
     data = "perf.data"
-    if "--profile" in sys.argv:
-        i = sys.argv.index("--profile")
-        if i + 1 < len(sys.argv):
-            del sys.argv[i]
-            data = sys.argv[i]
-            del sys.argv[i]
+    for arg in sys.argv[1:]:
+        if arg.startswith("--profile="):
+            data = arg.split("=", 1)[1]
+            sys.argv.remove(arg)
+            break
+        if arg == "--profile" or arg == "-i":
+            i = sys.argv.index(arg)
+            if i + 1 < len(sys.argv):
+                del sys.argv[i]
+                data = sys.argv[i]
+                del sys.argv[i]
+                break
     pargs = [perf, "script", "-i", data, sys.argv[0]] + sys.argv[1:]
     sys.exit(subprocess.run(pargs).returncode)
 
