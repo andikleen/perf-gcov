@@ -423,6 +423,7 @@ def compute_summary(stats: Stats) -> dict:
     # - Sort counts descending (hottest first)
     # - Iterate cutoffs ascending (1%, 10%, 20%, ...)
     # - Use PERSISTENT state (cumulative histogram)
+    # - ALWAYS write 16 entries
     detailed_summaries = []
     if total_count > 0 and count_frequencies:
         # Sort counts in descending order (hottest first)
@@ -453,6 +454,12 @@ def compute_summary(stats: Stats) -> dict:
                 'min_count': last_count,
                 'num_counts': cumulative_samples
             })
+    else:
+        # Empty or zero-count profile: write 16 zero entries (matches AutoFDO)
+        detailed_summaries = [
+            {'cutoff': cutoff, 'min_count': 0, 'num_counts': 0}
+            for cutoff in DEFAULT_CUTOFFS
+        ]
 
     return {
         'total_count': total_count,
