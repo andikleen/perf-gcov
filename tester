@@ -36,6 +36,10 @@ cleanup_test_files() {
 # Compare gcov.py output with create_gcov reference
 diff_check() {
 	local i=$1
+	if [ -z "$(type -p create_gcov)" ] ; then
+		echo "create_gcov not found, skipping reference comparison"
+		return 0
+	fi
 	echo "autofdo dump"
 	dump_gcov ${i}.gcov > ${i}.dump
 	cat ${i}.dump
