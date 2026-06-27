@@ -11,10 +11,7 @@
 # please run make typecheck to verify after changes
 
 # open:
-# handle non unique symbols using dwarf (same file)
-# check buildid
-# output multiple gcovs
-# support online mode
+# check buildid?
 
 import os
 import sys
@@ -134,7 +131,7 @@ class BinaryContext:
         # Load offset for shared library relocation (runtime_addr - file_addr)
         self.load_offset: int = 0
         # outermost function name -> profile tree root
-        self.tree: dict[str, FuncNode] = {}
+        self.tree: dict[tuple[str, str | None], FuncNode] = {}
         # Range-based profile data (LBR-derived ranges)
         self.range_counts: Counter[tuple[tuple[int, int], str | None]] = Counter()
         # ((from_addr, to_addr), from_sym, to_sym) -> count
@@ -142,7 +139,7 @@ class BinaryContext:
         # Timestamp tracking: first sample time per function
         self.first_address_time: dict[int, int] = {}
         # Root function name -> first sample timestamp
-        self.func_timestamp: dict[str, int] = {}
+        self.func_timestamp: dict[tuple[str, str | None], int] = {}
         # Frame cache: addr -> frames | None
         self.frame_cache: dict[int, list[Frame] | None] = {}
         # Sample count for --min-samples filtering
@@ -152,12 +149,11 @@ class BinaryContext:
         self.warned_neg_line: bool = False
 
     def root(self, name: str, source_file: str | None = None) -> "FuncNode":
-        node = self.tree.get(name)
+        key = (name, source_file)
+        node = self.tree.get(key)
         if node is None:
             node = FuncNode(name, source_file)
-            self.tree[name] = node
-        elif source_file and not node.source_file:
-            node.source_file = source_file
+            self.tree[key] = node
         return node
 
 # dsoname -> BinaryContext
@@ -237,9 +233,9 @@ class FuncNode:
         # offset -> sample count for positions directly in this instance
         self.positions: Counter[int] = Counter()
         # offset -> {callee name -> count} for resolved call targets
-        self.targets: dict[int, Counter[str]] = defaultdict(Counter)
+        self.targets: dict[int, Counter[tuple[str, str | None]]] = defaultdict(Counter)
         # (offset, callee name) -> child node for inlined callees
-        self.children: dict[tuple[int, str], FuncNode] = dict()
+        self.children: dict[tuple[int, str, str | None], FuncNode] = dict()
         # Offsets that must be emitted even with count=0 and no targets.
         # These mark scaffolding positions (function entry/exit boundaries).
         # NOTE: This is runtime-only state used during tree construction;
@@ -247,13 +243,11 @@ class FuncNode:
         self.structural_zeros: set[int] = set()
 
     def child(self, offset: int, name: str, source_file: str | None = None) -> "FuncNode":
-        key = (offset, name)
+        key = (offset, name, source_file)
         node = self.children.get(key)
         if node is None:
             node = FuncNode(name, source_file)
             self.children[key] = node
-        elif source_file and not node.source_file:
-            node.source_file = source_file
         return node
 
     def head_count(self) -> int:
@@ -266,14 +260,8 @@ class FuncNode:
         return any(child.has_output() for child in self.children.values())
 
 def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
-             count: int, target: str | None, inline_source_files: list[str | None] | None = None) -> None:
-    """Accumulate COUNT into the tree.
-
-    PATH is the inline call chain from the outermost real function down to
-    (but excluding) the innermost frame, as (function name, call offset)
-    pairs. OFFSET is the position offset within the innermost frame and
-    TARGET, if set, is a call target recorded at that position.
-    inline_source_files are the source files for each inline frame in path."""
+             count: int, target: tuple[str, str | None] | None,
+             inline_source_files: list[str | None] | None = None) -> None:
     node = root
     for i, (name, off) in enumerate(path):
         src_file = inline_source_files[i] if inline_source_files and i < len(inline_source_files) else None
@@ -282,12 +270,12 @@ def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
     if target is not None:
         node.targets[offset][target] += count
 
-def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[str]]]:
+def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[tuple[str, str | None]]]]:
     positions = []
     for off in sorted(node.positions):
         count = node.positions[off]
-        targets = Counter({name: target_count
-                           for name, target_count in node.targets.get(off, Counter()).items()
+        targets = Counter({key: target_count
+                           for key, target_count in node.targets.get(off, Counter()).items()
                            if target_count >= args.threshold})
 
         if count == 0:
@@ -302,27 +290,22 @@ def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[str]]]:
 
 def emitted_children(node: FuncNode) -> list[tuple[int, str, FuncNode]]:
     return [(coff, cname, child)
-            for (coff, cname), child in sorted(node.children.items())
+            for (coff, cname, csrc), child in sorted(node.children.items())
             if child.has_output()]
 
-def collect_strings(node: FuncNode, out: set[str]) -> None:
-    out.add(node.name)
-    for _, _, targets in filtered_positions(node):
-        out.update(targets.keys())
-    for _, _, child in emitted_children(node):
-        collect_strings(child, out)
-
 def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
-               string_index: dict[str, int], toplevel: bool, ctx: BinaryContext) -> None:
+               entry_index: dict[tuple[str, str | None], int],
+               toplevel: bool, ctx: BinaryContext) -> None:
+    node_key = (node.name, node.source_file)
     if toplevel:
         wcounter(f, node.head_count())
         if args.gcov_version >= 3:
-            ts = ctx.func_timestamp.get(node.name, 0)
+            ts = ctx.func_timestamp.get(node_key, 0)
             wcounter(f, ts)  # first sample timestamp (nanoseconds)
-        w32(f, string_index[node.name])
+        w32(f, entry_index[node_key])
     else:
         w32(f, offset)
-        w32(f, string_index[node.name])
+        w32(f, entry_index[node_key])
     positions = filtered_positions(node)
     children = emitted_children(node)
 
@@ -334,53 +317,70 @@ def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
         w32(f, off)
         w32(f, len(targets))
         wcounter(f, count)
-        for tname, tcount in targets.most_common():
+        for tkey, tcount in targets.most_common():
             w32(f, HIST_TYPE_INDIR_CALL_TOPN)
-            wcounter(f, string_index[tname])
+            wcounter(f, entry_index[tkey])
             wcounter(f, tcount)
 
     for coff, _, child in children:
-        wfunc_node(f, child, coff, string_index, False, ctx)
+        wfunc_node(f, child, coff, entry_index, False, ctx)
 
-def gen_strtable(ctx: BinaryContext):
+def gen_strtable(tree: dict[str, FuncNode]) -> tuple[list[str], dict[str, int]]:
     strings: set[str] = set()
-    for node in ctx.tree.values():
-        collect_strings(node, strings)
+    for node in tree.values():
+        _collect_strings_v2(node, strings)
     # Index 0 must be empty (reserved by GCC)
     string_table = [""] + sorted(strings)
-    string_index = { name: i for i, name in enumerate(string_table) }
+    string_index = {name: i for i, name in enumerate(string_table)}
     return string_table, string_index
 
+
+def _collect_strings_v2(node: FuncNode, out: set[str]) -> None:
+    out.add(node.name)
+    for _, _, child in emitted_children(node):
+        _collect_strings_v2(child, out)
+
 def gen_strtable_v3(ctx: BinaryContext):
-    """Generate string table for GCOV v3 format with file names."""
+    """Generate file table and function entry list for GCOV v3 format.
+
+    Returns:
+        file_table: sorted list of source file names
+        file_index: source_file → index mapping
+        entries: list of (function_name, file_index) pairs (allows duplicate names)
+        entry_index: (name, source_file) → position in entries list
+    """
     source_files: set[str] = set()
-    function_names: set[str] = set()
-    func_to_file: dict[str, str | None] = {}
+    func_to_file: dict[tuple[str, str | None], str | None] = {}
 
     # Collect from tree roots
-    for name, node in ctx.tree.items():
-        if node.source_file:
-            source_files.add(node.source_file)
-            func_to_file[name] = node.source_file
-        collect_strings_v3(ctx, node, function_names, source_files, func_to_file)
+    for (name, src_file), node in ctx.tree.items():
+        if src_file:
+            source_files.add(src_file)
+        func_to_file[(name, src_file)] = src_file
+        collect_strings_v3(ctx, node, source_files, func_to_file)
 
     # Build file table and index
     file_table = sorted(source_files)
     file_index = {fname: i for i, fname in enumerate(file_table)}
 
-    # Build function → file_index mapping
-    func_file_map = {}
-    for func_name, src_file in func_to_file.items():
-        if src_file and src_file in file_index:
-            func_file_map[func_name] = file_index[src_file]
-        else:
-            func_file_map[func_name] = -1  # No file info
+    # Build ordered entry list (allows duplicate names with different files)
+    entries: list[tuple[str, int]] = []
+    entry_index: dict[tuple[str, str | None], int] = {}
+    for key in sorted(ctx.tree.keys()):
+        name, src_file = key
+        file_idx = file_index.get(src_file, -1) if src_file else -1
+        entry_index[key] = len(entries)
+        entries.append((name, file_idx))
 
-    # Build string table (index 0 must be empty, reserved by GCC)
-    string_table = [""] + sorted(function_names)
-    string_index = {name: i for i, name in enumerate(string_table)}
+    # Add entries for target functions not in the tree
+    for key in func_to_file:
+        if key not in entry_index:
+            name, src_file = key
+            file_idx = file_index.get(src_file, -1) if src_file else -1
+            entry_index[key] = len(entries)
+            entries.append((name, file_idx))
 
-    return file_table, file_index, func_file_map, string_table, string_index
+    return file_table, file_index, entries, entry_index
 
 def compute_summary(ctx: BinaryContext) -> dict:
     """Compute profile summary statistics for GCOV_TAG_AFDO_SUMMARY."""
@@ -408,11 +408,11 @@ def compute_summary(ctx: BinaryContext) -> dict:
                 count_frequencies[count] = count_frequencies.get(count, 0) + 1
 
         # Recursively traverse inlined children (callsites)
-        for (call_offset, callee_name), child in node.children.items():
+        for (call_offset, callee_name, callee_src), child in node.children.items():
             traverse_node(child, is_root=False)
 
     # Traverse all top-level functions
-    for func_name, func_node in ctx.tree.items():
+    for key, func_node in ctx.tree.items():
         traverse_node(func_node, is_root=True)
 
     # Compute detailed summaries (percentile histogram)
@@ -481,30 +481,27 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
         wcounter(f, ds['min_count'])
         wcounter(f, ds['num_counts'])
 
-def collect_strings_v3(ctx: BinaryContext, node: FuncNode, func_names: set[str], files: set[str],
-                       func_to_file: dict[str, str | None]) -> None:
-    """Recursively collect function names and source files for v3 format."""
-    func_names.add(node.name)
+def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
+                       func_to_file: dict[tuple[str, str | None], str | None]) -> None:
+    """Recursively collect source files and func_to_file mappings for v3 format."""
     if node.source_file:
         files.add(node.source_file)
-        if node.name not in func_to_file:
-            func_to_file[node.name] = node.source_file
+        key = (node.name, node.source_file)
+        if key not in func_to_file:
+            func_to_file[key] = node.source_file
 
     # Collect from call targets
     for _, _, targets in filtered_positions(node):
-        func_names.update(targets.keys())
-        # For targets, try to look up source file from tree if not already mapped
-        for target_name in targets.keys():
-            if target_name not in func_to_file:
-                # Try to find this function in the tree
-                if target_name in ctx.tree and ctx.tree[target_name].source_file:
-                    func_to_file[target_name] = ctx.tree[target_name].source_file
-                else:
-                    func_to_file[target_name] = None  # No file info
+        for tkey in targets.keys():
+            _, tsrc = tkey
+            if tsrc:
+                files.add(tsrc)
+            if tkey not in func_to_file:
+                func_to_file[tkey] = tsrc
 
     # Recurse into inline children
     for _, _, child in emitted_children(node):
-        collect_strings_v3(ctx, child, func_names, files, func_to_file)
+        collect_strings_v3(ctx, child, files, func_to_file)
 
 
 def expand_ranges(ctx: BinaryContext) -> None:
@@ -548,8 +545,8 @@ def expand_ranges(ctx: BinaryContext) -> None:
         if not range_has_data:
             skipped_ranges += 1
 
-    position_max_counts: dict[tuple[str, tuple[tuple[str, int], ...], int], int] = {}
-    position_source_files: dict[tuple[str, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
+    position_max_counts: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], int] = {}
+    position_source_files: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
 
     for addr, addr_count in address_counts.items():
         frames = getframes(ctx, addr)
@@ -570,8 +567,8 @@ def expand_ranges(ctx: BinaryContext) -> None:
         root_source_file = os.path.basename(root_frame.file) if root_frame.file else None
 
         addr_time = ctx.first_address_time.get(addr)
-        if addr_time and root_name not in ctx.func_timestamp:
-            ctx.func_timestamp[root_name] = addr_time
+        if addr_time and (root_name, root_source_file) not in ctx.func_timestamp:
+            ctx.func_timestamp[(root_name, root_source_file)] = addr_time
 
         names: list[str] = [root_name]
         source_files: list[str | None] = [root_source_file]
@@ -591,16 +588,16 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
         leaf_off = frame_offset(frames[-1], ctx)
         path_tuple = tuple(path)
-        pos_key = (root_name, path_tuple, leaf_off)
+        pos_key = (root_name, root_source_file, path_tuple, leaf_off)
 
         if pos_key not in position_max_counts or addr_count > position_max_counts[pos_key]:
             position_max_counts[pos_key] = addr_count
             position_source_files[pos_key] = (root_source_file, source_files[1:])
 
     for pos_key, count in position_max_counts.items():
-        root_name, path_tuple, leaf_off = pos_key
+        root_name, root_source_file, path_tuple, leaf_off = pos_key
         path = list(path_tuple)
-        root_source_file, inline_source_files = position_source_files[pos_key]
+        _, inline_source_files = position_source_files[pos_key]
         root = ctx.root(root_name, root_source_file)
 
         if len(path) > 0:
@@ -653,6 +650,7 @@ def add_branch_targets(ctx: BinaryContext) -> None:
             continue
 
         sroot_source_file = os.path.basename(sroot.file) if sroot.file else None
+        droot_source_file = os.path.basename(droot.file) if droot.file else None
 
         root = ctx.root(sroot_name, sroot_source_file)
         names: list[str] = [sroot_name]
@@ -670,14 +668,14 @@ def add_branch_targets(ctx: BinaryContext) -> None:
         for i in range(1, len(sframes)):
             path.append((names[i], frame_offset(sframes[i - 1], ctx)))
 
-        if droot_name and droot_name not in ctx.func_timestamp:
+        if droot_name and (droot_name, droot_source_file) not in ctx.func_timestamp:
             branch_time = ctx.first_address_time.get(from_addr)
             if branch_time:
-                ctx.func_timestamp[droot_name] = branch_time
+                ctx.func_timestamp[(droot_name, droot_source_file)] = branch_time
 
         if not droot_name:
             continue
-        target = droot_name
+        target = (droot_name, droot_source_file)
 
         leaf_off = frame_offset(sframes[-1], ctx)
         node = root
@@ -737,6 +735,93 @@ def add_dwarf_zero_scaffolding(ctx: BinaryContext) -> None:
 
     vprint(f"Added {added_zeros} DWARF-informed zero scaffolding positions")
 
+def _merge_tree_for_v2(tree: dict[tuple[str, str | None], FuncNode]) -> dict[str, FuncNode]:
+    """Merge nodes with same name for v2 format (no file disambiguation)."""
+    merged: dict[str, FuncNode] = {}
+    for (name, src_file), node in tree.items():
+        if name in merged:
+            merge_nodes(merged[name], node)
+        else:
+            merged[name] = copy.deepcopy(node)
+    # Merge targets by name (strip source_file dimension) — recurse into children
+    _merge_node_targets_for_v2(merged)
+    return merged
+
+
+def _merge_node_targets_for_v2(tree: dict[str, FuncNode]) -> None:
+    for node in tree.values():
+        for off in list(node.targets):
+            merged_targets: Counter[str] = Counter()
+            for (tname, tsrc), tcount in node.targets[off].items():
+                merged_targets[tname] += tcount
+            node.targets[off] = merged_targets  # type: ignore[assignment]
+        _merge_child_targets_for_v2(node)
+
+
+def _merge_child_targets_for_v2(node: FuncNode) -> None:
+    for child in node.children.values():
+        for off in list(child.targets):
+            merged_targets: Counter[str] = Counter()
+            for (tname, tsrc), tcount in child.targets[off].items():
+                merged_targets[tname] += tcount
+            child.targets[off] = merged_targets  # type: ignore[assignment]
+        _merge_child_targets_for_v2(child)
+
+
+def _write_gcov_v2_functions(f: BinaryIO, tree: dict[str, FuncNode],
+                              string_index: dict[str, int], ctx: BinaryContext) -> None:
+    """Write FUNCTION section for v2 format using a merged tree."""
+    def wfunc_v2(node: FuncNode, offset: int, toplevel: bool) -> None:
+        if toplevel:
+            wcounter(f, node.head_count())
+            w32(f, string_index[node.name])
+        else:
+            w32(f, offset)
+            w32(f, string_index[node.name])
+        positions: list[tuple[int, int, Counter[str]]] = []
+        for off in sorted(node.positions):
+            count = node.positions[off]
+            targets: Counter[str] = Counter()
+            for name, c in node.targets.get(off, Counter()).items():
+                if c >= args.threshold:
+                    targets[name] += c  # type: ignore[index]
+            if count == 0:
+                if off not in node.structural_zeros and not targets:
+                    continue
+            elif count < args.threshold:
+                continue
+            positions.append((off, count, targets))
+        children = [(coff, cname, child)
+                    for (coff, cname, csrc), child in sorted(node.children.items())
+                    if child.has_output()]
+        w32(f, len(positions))
+        w32(f, len(children))
+        for off, count, targets in positions:
+            w32(f, off)
+            w32(f, len(targets))
+            wcounter(f, count)
+            for tname, tcount in targets.most_common():
+                w32(f, HIST_TYPE_INDIR_CALL_TOPN)
+                wcounter(f, string_index[tname])
+                wcounter(f, tcount)
+        for coff, _, child in children:
+            wfunc_v2(child, coff, False)
+
+    w32(f, GCOV_TAG_AFDO_FUNCTION)
+    lenoff = f.tell()
+    w32(f, 0)
+    vprint("Writing %d functions to %s" % (len(tree), ctx.dsoname))
+    w32(f, len(tree))
+    for name in sorted(tree):
+        wfunc_v2(tree[name], 0, True)
+    if not pathlib.Path(f.name).is_fifo():
+        endoff = f.tell()
+        f.seek(lenoff, 0)
+        vprint("Data length %d" % (endoff - lenoff))
+        w32(f, endoff - lenoff)
+        f.seek(endoff, 0)
+
+
 def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
     """Write gcov profile file for a specific binary. Returns True if written."""
 
@@ -765,20 +850,28 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
             w32(f, GCOV_TAG_AFDO_FILE_NAMES)
 
             if args.gcov_version == 2:
-                string_table, string_index = gen_strtable(ctx)
+                v2_tree = _merge_tree_for_v2(ctx.tree)
+                string_table, string_index = gen_strtable(v2_tree)
                 length = 4 + sum((len(s) + 5) for s in string_table)
                 w32(f, length)
                 w32(f, len(string_table))
                 for fn in string_table:
                     wstring(f, fn)
 
+                _write_gcov_v2_functions(f, v2_tree, string_index, ctx)
+                # v2 functions already written; skip the common FUNCTION section below
+                write_gcov_tail(f)
+                os.rename(tmp_path, output_path)
+                print(f"Wrote {output_path}")
+                return True
+
             elif args.gcov_version == 3:
-                file_table, file_index, func_file_map, string_table, string_index = gen_strtable_v3(ctx)
+                file_table, file_index, entries, entry_index = gen_strtable_v3(ctx)
 
                 length = 4
                 length += sum(len(fname) + 5 for fname in file_table)
                 length += 4
-                length += sum(len(func) + 5 + 4 for func in string_table)
+                length += sum(len(name) + 5 + 4 for name, _ in entries)
 
                 w32(f, length)
 
@@ -786,10 +879,9 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
                 for fname in file_table:
                     wstring(f, fname)
 
-                w32(f, len(string_table))
-                for func_name in string_table:
+                w32(f, len(entries))
+                for func_name, file_idx in entries:
                     wstring(f, func_name)
-                    file_idx = func_file_map.get(func_name, -1)
                     w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)
 
             w32(f, GCOV_TAG_AFDO_FUNCTION)
@@ -798,8 +890,8 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
 
             vprint("Writing %d functions to %s" % (len(ctx.tree), output_path))
             w32(f, len(ctx.tree))
-            for name in sorted(ctx.tree):
-                wfunc_node(f, ctx.tree[name], 0, string_index, True, ctx)
+            for key in sorted(ctx.tree):
+                wfunc_node(f, ctx.tree[key], 0, entry_index, True, ctx)
 
             if not pathlib.Path(f.name).is_fifo():
                 endoff = f.tell()

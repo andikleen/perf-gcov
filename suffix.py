@@ -68,24 +68,25 @@ def get_original_name(name: str, policy: str) -> str:
 def _elide_node(node, policy: str) -> None:
     for offset in list(node.targets):
         targets = node.targets[offset]
-        normalized: dict[str, int] = {}
-        for tgt_name, count in targets.items():
+        normalized: dict[tuple[str, str | None], int] = {}
+        for (tgt_name, tgt_src), count in targets.items():
             base = get_original_name(tgt_name, policy)
-            normalized[base] = normalized.get(base, 0) + count
+            key = (base, tgt_src)
+            normalized[key] = normalized.get(key, 0) + count
         node.targets[offset] = type(targets)(normalized)
 
     to_rename = []
-    for (off, callee_name), child in list(node.children.items()):
+    for (off, callee_name, callee_src), child in list(node.children.items()):
         base = get_original_name(callee_name, policy)
         if base != callee_name:
-            to_rename.append(((off, callee_name), off, base, child))
+            to_rename.append(((off, callee_name, callee_src), off, base, callee_src, child))
 
     renamed: set[int] = set()
-    for old_key, off, base_name, child in to_rename:
+    for old_key, off, base_name, callee_src, child in to_rename:
         node.children.pop(old_key)
         _elide_node(child, policy)
         renamed.add(id(child))
-        new_key = (off, base_name)
+        new_key = (off, base_name, callee_src)
         if new_key in node.children:
             merge_nodes(node.children[new_key], child)
         else:
@@ -100,19 +101,19 @@ def elide_tree_suffixes(tree: dict, policy: str) -> None:
     if policy == 'none':
         return
 
-    to_rename = [(name, get_original_name(name, policy))
-                 for name in list(tree.keys())]
+    to_rename = [(key, (get_original_name(key[0], policy), key[1]))
+                 for key in list(tree.keys())]
 
-    for orig_name, base_name in to_rename:
-        if base_name == orig_name:
+    for orig_key, new_key in to_rename:
+        if orig_key == new_key:
             continue
-        node = tree.pop(orig_name)
+        node = tree.pop(orig_key)
         _elide_node(node, policy)
-        if base_name in tree:
-            merge_nodes(tree[base_name], node)
+        if new_key in tree:
+            merge_nodes(tree[new_key], node)
         else:
-            node.name = base_name
-            tree[base_name] = node
+            node.name = new_key[0]
+            tree[new_key] = node
 
     for node in tree.values():
         _elide_node(node, policy)
