@@ -10,10 +10,8 @@ BacktraceState = Any
 # filename and function are None when libbacktrace cannot determine them.
 Frame = tuple[int, str | None, int, str | None, int, int]
 
-def createstate(filename: str) -> BacktraceState:
-    """Initialize state for the ELF file FILENAME."""
-    ...
+def createstate(filename: str) -> BacktraceState: ...
 
-def pcinfo(state: BacktraceState, ip: int) -> list[Frame]:
+def pcinfo(state: BacktraceState, ip: int) -> list[Frame] | None:
     """Return the inline stack for IP as a list of frame tuples (innermost first)."""
     ...
