@@ -11,17 +11,25 @@ the Linux perf tool.
 
 ## Setup
 
-So far needs a patched libbacktrace (patches in submission)
-Build a gcc with some [patches](https://github.com/andikleen/gcc/tree/libbacktrace-disc-8)
+Get patched libbacktrace (temporary, until these changes are upstreamed)
 
-Then copy the <gccbuilddir>/libbacktrace/.libs/libbacktrace.a
-and <gccsrcdir>/libbacktrace/backtrace.h files to this directory.
-(or point the makefile to the gcc directories)
+```
+git clone --depth 10 -b libbacktrace-disc-8 https://github.com/andikleen/gcc gcc
+cd gcc/libbacktrace
+./configure
+make
+cp backtrace.h .libs/libbacktrace.a ../../perf-gcov
+```
 
 Make sure you have the python-devel package for the python
 that your perf is built with installed. The Makefile finds
 the right python setup from the perf binary. You can override
 the perf binary used at build time with PERF=...
+
+```
+DEVEL=$(ldd $(which perf) | grep -o python.... | head -1)-config
+apt/dnf/zypper install $DEVEL
+```
 
 Build the backtrace python module
 
@@ -29,8 +37,8 @@ Build the backtrace python module
 make
 ```
 
-Then gcov.py or gcov-stream-profile.sh can be executed without installation.
-
+Then gcov.py or gcov-stream-profile.sh can be executed from this directory 
+without installation.
 
 ## Synopsis
 
@@ -71,12 +79,12 @@ The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so
 ## Differences to autofdo
 
 - Much less mature.
-- Not a nightmare to build.
+- Not a nightmare to build (I hope)
 - Much simpler (but only focussed on the gcc job)
 - Much less memory use for large dumps.
 - Supports streaming mode to not save individual samples to disk.
 - Supports online mode for automatic background profiling
-- Some differences in output due to differences in dwarf parsing.
+- Some differences in output due to differences in dwarf processing
 
 ## Credits
 
