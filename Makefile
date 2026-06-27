@@ -19,7 +19,7 @@ ${target}: backtracemodule.o
 backtracemodule.o: backtracemodule.c
 	gcc -Wall -I.  -fPIC $(shell ${CONFIG} --includes --cflags) -I ${BACKTRACESRC} -c backtracemodule.c
 
-TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall test-lto
+TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall test-lto tnonunique1 tnonunique2
 
 MULTI_TESTS = tlibmain tlibmain-only tmulti1 tmulti2 tmulti3
 DIRS = multibin_out
@@ -39,7 +39,7 @@ clean:
 		$(TESTS) $(MULTI_TESTS) \
 		libtlib.so run-tests-wrapper.sh \
 		tcall.d1 tcall.d2 tcall.1.* tcall.2.* tcall.id.* tcall.two.* \
-		tcall.copy.* tcall.mix tcall.thr tcall.bad tcall.two.opt
+		tcall.copy.* tcall.mix tcall.thr tcall.bad tcall.two.opt perf.data
 	rm -rf $(DIRS)
 
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
