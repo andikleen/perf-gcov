@@ -31,8 +31,38 @@ import backtrace
 import suffix
 from format import *
 
-ppath = os.getenv('PERF_EXEC_PATH')
-if ppath is None:
+# Define argparse early so --help works without perf re-execution
+ap = argparse.ArgumentParser()
+ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
+ap.add_argument('--binary', action='append', default=[],
+                help="Binary to profile (fnmatch pattern, repeatable). "
+                     "If omitted, auto-discover all binaries.")
+ap.add_argument('--profile', '-i', help="Profile data. Default perf.data")
+ap.add_argument('--gcov', help="gcov output file")
+ap.add_argument('--profiler', help="set profiler type", choices=["perf"])
+ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
+ap.add_argument('--verbose', action='store_true', help="Print every sample")
+ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
+ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], default=3,
+                help="GCOV version: 2 (function names only) or 3 (with source files, default)")
+ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
+                help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
+ap.add_argument('--insn-range-max', type=int, default=1<<20, help="Max range between branches to probe")
+ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
+                help="Symbol suffix elision policy (default: %(default)s)")
+ap.add_argument('--min-samples', type=int, default=100,
+                help="Skip binaries with fewer samples (default: 100)")
+ap.add_argument('--output-dir', help="Output directory for multi-binary mode")
+ap.add_argument('--write-empty', action='store_true',
+                help="Write empty profile files for binaries with no data")
+ap.add_argument('--quiet', action='store_true',
+                help="Suppress statistics output")
+
+if '--help' in sys.argv or '-h' in sys.argv:
+    ap.print_help()
+    sys.exit(0)
+
+if os.getenv('PERF_EXEC_PATH') is None:
     perf = os.getenv('PERF')
     if perf is None:
         perf = "perf"
@@ -54,38 +84,14 @@ if ppath is None:
     pargs = [perf, "script", "-i", data, sys.argv[0]] + sys.argv[1:]
     sys.exit(subprocess.run(pargs).returncode)
 
-sys.path.append(ppath + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
+perf_exec_path = os.getenv('PERF_EXEC_PATH')
+assert perf_exec_path is not None  # Only reached under perf script
+sys.path.append(perf_exec_path + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
 try:
     from perf_trace_context import perf_script_context # type: ignore
 except ImportError:
     sys.exit("Cannot find perf python modules")
-
-ap = argparse.ArgumentParser()
-ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
-ap.add_argument('--binary', action='append', default=[],
-                help="Binary to profile (fnmatch pattern, repeatable). "
-                     "If omitted, auto-discover all binaries.")
-ap.add_argument('--profile', '-i', help="Profile data. Default perf.data") # handled by perf
-ap.add_argument('--gcov', help="gcov output file")
-ap.add_argument('--profiler', help="set profiler type", choices=["perf"]) # for create_gcov compatibility. nop.
-ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
-ap.add_argument('--verbose', action='store_true', help="Print every sample")
-ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
-ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], default=3,
-                help="GCOV version: 2 (function names only) or 3 (with source files, default)")
-ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
-                help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
-ap.add_argument('--insn-range-max', type=int, default=1<<20, help="Max range between branches to probe")
-ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
-                help="Symbol suffix elision policy (default: %(default)s)")
-ap.add_argument('--min-samples', type=int, default=100,
-                help="Skip binaries with fewer samples (default: 100)")
-ap.add_argument('--output-dir', help="Output directory for multi-binary mode")
-ap.add_argument('--write-empty', action='store_true',
-                help="Write empty profile files for binaries with no data")
-ap.add_argument('--quiet', action='store_true',
-                help="Suppress statistics output")
 
 args = ap.parse_args()
 
