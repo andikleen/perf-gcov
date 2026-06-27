@@ -56,7 +56,7 @@ echo "Verifying test binaries..."
 ./tnonunique >/dev/null && echo "tnonunique OK"
 
 # Record profile running all three via wrapper
-if ! $PERF record -b -o multibin.data -c 100 -e branches:ppu ./run-tests-wrapper.sh >/dev/null 2>&1; then
+if ! $PERF record -b -o multibin.data -c 10003 -e branches:ppu ./run-tests-wrapper.sh >/dev/null 2>&1; then
 	echo "perf record failed" >&2
 	exit 1
 fi
@@ -106,7 +106,7 @@ echo "MIN-SAMPLES: OK"
 echo "=== RUN 3 TIMES -> STABLE ==="
 for run in 1 2 3; do
     rm -f tmulti1.gcov tmulti2.gcov tmulti3.gcov tnonunique.gcov
-    $PERF record -b -o multibin.data -c 100 -e branches:ppu ./run-tests-wrapper.sh >/dev/null 2>&1
+    $PERF record -b -o multibin.data -c 10003 -e branches:ppu ./run-tests-wrapper.sh >/dev/null 2>&1
     $PERF script -i multibin.data ./gcov.py --gcov-version 3 --quiet 2>&1
     test -f tmulti1.gcov || { echo "run $run: missing tmulti1.gcov"; exit 1; }
     test -f tmulti2.gcov || { echo "run $run: missing tmulti2.gcov"; exit 1; }
@@ -119,7 +119,7 @@ echo "STABLE: OK"
 echo "=== NON-UNIQUE SYMBOLS (no LTO) ==="
 rm -f tnonunique.gcov tnonunique.dump tnonunique-perf.data
 # Record tnonunique separately (smaller data, avoids scanning 4-binary file)
-$PERF record -b -o tnonunique-perf.data -c 100 -e branches:ppu ./tnonunique >/dev/null 2>&1
+$PERF record -b -o tnonunique-perf.data -c 10003 -e branches:ppu ./tnonunique >/dev/null 2>&1
 cleanup_files="${cleanup_files} tnonunique-perf.data"
 $PERF script -i tnonunique-perf.data ./gcov.py tnonunique.gcov --gcov-version 3 2>&1
 # Verify gcov contains both static functions (compute and helper each appear)
