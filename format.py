@@ -37,8 +37,8 @@ def wstring(f: BinaryIO, s: str) -> None:
 
 
 def wcounter(f: BinaryIO, v: int) -> None:
-    w32(f, (v       ) & 0xffffffff)
-    w32(f, (v >> 32 ) & 0xffffffff)
+    w32(f, (v) & 0xffffffff)
+    w32(f, (v >> 32) & 0xffffffff)
 
 
 def gen_offset(line: int, disc: int) -> int:
@@ -56,9 +56,9 @@ def r32(f: BinaryIO) -> int:
 
 
 def rstring(f: BinaryIO) -> str:
-    l = r32(f)
-    s = f.read(l)
-    return struct.unpack("%ds" % l, s)[0].decode('utf-8')[:-1]
+    length = r32(f)
+    s = f.read(length)
+    return struct.unpack("%ds" % length, s)[0].decode('utf-8')[:-1]
 
 
 def rcounter(f: BinaryIO) -> int:

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from collections import Counter
-from typing import Any, Protocol
+from typing import Protocol
 from format import FuncKey, merge_nodes
 
 

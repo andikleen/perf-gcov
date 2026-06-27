@@ -45,6 +45,9 @@ clean:
 typecheck:
 	mypy gcov.py gcov-dump.py format.py profile-merger.py suffix.py test-suffix.py --check-untyped-defs --disallow-untyped-defs
 
+lint:
+	flake8 gcov.py gcov-dump.py format.py profile-merger.py suffix.py test-suffix.py
+
 test:
 	./tester
 	./test-gcov-online.sh

@@ -43,7 +43,7 @@ ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], de
                 help="GCOV version: 2 (upto gcc 15) or 3 (gcc 16+, default)")
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
-ap.add_argument('--insn-range-max', type=int, default=1<<20, help="Max range between branches to probe")
+ap.add_argument('--insn-range-max', type=int, default=1 << 20, help="Max range between branches to probe")
 ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
                 help="Symbol suffix elision policy (default: %(default)s)")
 ap.add_argument('--min-samples', type=int, default=100,
@@ -83,7 +83,7 @@ assert perf_exec_path is not None  # Only reached under perf script
 sys.path.append(perf_exec_path + '/scripts/python/Perf-Trace-Util/lib/Perf/Trace')
 
 try:
-    from perf_trace_context import perf_script_context # type: ignore
+    from perf_trace_context import perf_script_context  # type: ignore[import]
 except ImportError:
     sys.exit("Cannot find perf python modules")
 
@@ -830,7 +830,8 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
 
 def trace_end() -> None:
     vprint("%d raw branches, %d filtered, %d errored, %d crossed" %
-          (stats.raw_total_branches, stats.raw_ignored_branches, stats.errored, stats.crossed))
+           (stats.raw_total_branches, stats.raw_ignored_branches,
+            stats.errored, stats.crossed))
 
     # Filter binaries by --min-samples
     active_binaries = {dsoname: ctx for dsoname, ctx in binaries.items()
@@ -966,7 +967,7 @@ def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
                   f"function={fr.sym}, line={fr.line}, base={base}",
                   file=sys.stderr)
         elif not ctx.warned_neg_line and not args.quiet:
-            print(f"WARNING: Negative line offset clamped to 0 (use --verbose for details)",
+            print("WARNING: Negative line offset clamped to 0 (use --verbose for details)",
                   file=sys.stderr)
             ctx.warned_neg_line = True
         line = 0
@@ -1016,8 +1017,8 @@ def process_event(param_dict: dict[str, Any]) -> None:
 
         # Duplicate-top-entry filtering per binary
         if (len(branches) >= 2 and
-            branches[0][1]["from"] == branches[1][1]["from"] and
-            branches[0][1]["to"] == branches[1][1]["to"]):
+                branches[0][1]["from"] == branches[1][1]["from"] and
+                branches[0][1]["to"] == branches[1][1]["to"]):
             br0_from = branches[0][1]["from"]
             br0_to = branches[0][1]["to"]
             if abs(br0_from - br0_to) > args.strip_dup_backedge_stride_limit:

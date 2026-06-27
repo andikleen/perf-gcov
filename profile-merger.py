@@ -220,8 +220,9 @@ def _merge_node(dest: FuncNode, src: FuncNode) -> None:
         dest.source_file = src.source_file
     merge_nodes(dest, src)
 
-def filtered_positions(node: FuncNode,
-                        threshold: int) -> list[tuple[int, int, Counter[FuncKey]]]:
+def filtered_positions(
+    node: FuncNode, threshold: int,
+) -> list[tuple[int, int, Counter[FuncKey]]]:
     result = []
     for off in sorted(node.positions):
         count = node.positions[off]
@@ -233,8 +234,9 @@ def filtered_positions(node: FuncNode,
         result.append((off, count, targets))
     return result
 
-def emitted_children(node: FuncNode, threshold: int
-                      ) -> list[tuple[int, str, FuncNode]]:
+def emitted_children(
+    node: FuncNode, threshold: int,
+) -> list[tuple[int, str, FuncNode]]:
     return [(coff, cname, child)
             for (coff, cname, csrc), child in sorted(node.children.items())
             if child.has_output(threshold)]
@@ -248,10 +250,12 @@ def collect_strings(node: FuncNode, out: set[str], threshold: int) -> None:
     for _, _, child in emitted_children(node, threshold):
         collect_strings(child, out, threshold)
 
-def collect_strings_v3(node: FuncNode, files: set[str],
-                        func_to_file: dict[FuncKey, str | None],
-                        tree: dict[FuncKey, FuncNode],
-                        threshold: int) -> None:
+def collect_strings_v3(
+    node: FuncNode, files: set[str],
+    func_to_file: dict[FuncKey, str | None],
+    tree: dict[FuncKey, FuncNode],
+    threshold: int,
+) -> None:
     if node.source_file:
         files.add(node.source_file)
         key = (node.name, node.source_file)
@@ -374,8 +378,8 @@ def compute_summary(tree: dict[FuncKey, FuncNode]) -> dict:
 
     detailed_summaries = []
     if total_count > 0 and count_frequencies:
-        sorted_counts = sorted(count_frequencies.items(),
-                                key=lambda x: x[0], reverse=True)
+        sorted_counts = sorted(
+            count_frequencies.items(), key=lambda x: x[0], reverse=True)
         cumulative_sum = 0
         cumulative_samples = 0
         idx = 0
@@ -428,7 +432,7 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
 def write_profile(path: str, tree: dict[FuncKey, FuncNode],
                   gcov_version: int, threshold: int) -> None:
     if not tree:
-        sys.exit(f"error: no functions to write (empty tree)")
+        sys.exit("error: no functions to write (empty tree)")
 
     with open(path, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
