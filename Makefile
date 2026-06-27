@@ -42,11 +42,13 @@ clean:
 		tcall.copy.* tcall.mix tcall.thr tcall.bad tcall.two.opt
 	rm -rf $(DIRS)
 
+PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
+	test-suffix.py
 typecheck:
-	mypy gcov.py gcov-dump.py format.py profile-merger.py suffix.py test-suffix.py --check-untyped-defs --disallow-untyped-defs
+	mypy ${PSRC} --check-untyped-defs --disallow-untyped-defs
 
 lint:
-	flake8 gcov.py gcov-dump.py format.py profile-merger.py suffix.py test-suffix.py
+	flake8 ${PSRC}
 
 test:
 	./tester
