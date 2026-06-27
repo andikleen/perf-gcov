@@ -1,6 +1,7 @@
 # perf-gcov
 
-perf based replacement for autofdo to generate profile feedback data for gcc's -fauto-profile option.
+perf based replacement for autofdo to generate profile feedback data for gcc's
+[-fauto-profile](https://gcc.gnu.org/onlinedocs/gcc-16.1.0/gcc/Optimize-Options.html#index-fauto-profile) option.
 
 It reads LBR data from perf.data files collected with perf record -b and generates
 a autofdo gcov file for gcc.
@@ -11,7 +12,7 @@ the Linux perf tool.
 ## Setup
 
 So far needs a patched libbacktrace (patches in submission)
-Build a gcc with the patches in https://github.com/andikleen/gcc/tree/libbacktrace-disc-8
+Build a gcc with some [patches](https://github.com/andikleen/gcc/tree/libbacktrace-disc-8)
 
 Then copy the <gccbuilddir>/libbacktrace/.libs/libbacktrace.a
 and <gccsrcdir>/libbacktrace/backtrace.h files to this directory.
@@ -82,3 +83,6 @@ The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so
 Andi Kleen with some AI help. Original concept and some algorithms
 inspired by [autofdo](https://github.com/google/autofdo)
 
+## License
+
+GPLv3-or-later

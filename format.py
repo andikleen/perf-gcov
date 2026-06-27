@@ -167,9 +167,9 @@ def _merge_v2_child_targets(node: _V2Node) -> None:
 
 def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
                                string_index: dict[str, int],
-                               threshold: int) -> None:
+                               threshold: int, toplevel: bool = True) -> None:
     """Write one function instance in v2 format."""
-    if offset == 0:
+    if toplevel:
         head = node.head_count() if callable(node.head_count) else node.head_count
         wcounter(f, head)
         w32(f, string_index[node.name])
@@ -184,11 +184,12 @@ def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
         for name, c in node.targets.get(off, Counter()).items():
             if c >= threshold:
                 targets[name] += c
-        has_output = count >= threshold or (count == 0 and targets)
-        if not has_output:
+        if count == 0:
             zeros = node.structural_zeros if hasattr(node, 'structural_zeros') else set()
-            if off not in zeros:
+            if off not in zeros and not targets:
                 continue
+        elif count < threshold:
+            continue
         positions.append((off, count, targets))
 
     children: list[tuple[int, str, Any]] = []
@@ -213,7 +214,7 @@ def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
             wcounter(f, tcount)
 
     for coff, _, child in children:
-        write_v2_function_instance(f, child, coff, string_index, threshold)
+        write_v2_function_instance(f, child, coff, string_index, threshold, toplevel=False)
 
 
 def write_v2_function_section(f: BinaryIO, tree: dict[str, Any],
