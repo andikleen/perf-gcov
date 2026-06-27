@@ -2,7 +2,14 @@
 # function names so profiles are stable across LTO rebuilds.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from format import merge_nodes
+from collections import Counter
+from typing import Any, Protocol
+from format import FuncKey, merge_nodes
+
+
+class _ElidableNode(Protocol):
+    targets: dict[int, Counter[FuncKey]]
+    children: dict
 
 ELIDE_POLICIES = ('all', 'selected', 'none')
 
@@ -65,7 +72,7 @@ def get_original_name(name: str, policy: str) -> str:
         raise ValueError(f"unknown suffix elision policy: {policy}")
     return fn(name)
 
-def _elide_node(node, policy: str) -> None:
+def _elide_node(node: _ElidableNode, policy: str) -> None:
     for offset in list(node.targets):
         targets = node.targets[offset]
         normalized: dict[tuple[str, str | None], int] = {}

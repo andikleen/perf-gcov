@@ -89,12 +89,12 @@ except ImportError:
 
 args = ap.parse_args()
 
-def vprint(*vals, **kwargs):
+def vprint(*vals: Any, **kwargs: Any) -> None:
     """Print only if not in quiet mode."""
     if not args.quiet:
         print(*vals, **kwargs)
 
-def trace_begin():
+def trace_begin() -> None:
     pass
 
 # One frame of an inline stack as returned by libbacktrace pcinfo.
@@ -105,7 +105,7 @@ Frame = NamedTuple('Frame', [('file', str | None),
                              ('declline', int)])
 
 class Stats:
-    def __init__(self):
+    def __init__(self) -> None:
         self.ignored = 0
         self.errored = 0
         self.crossed = 0
@@ -131,7 +131,7 @@ class BinaryContext:
         # Load offset for shared library relocation (runtime_addr - file_addr)
         self.load_offset: int = 0
         # outermost function name -> profile tree root
-        self.tree: dict[tuple[str, str | None], FuncNode] = {}
+        self.tree: dict[FuncKey, FuncNode] = {}
         # Range-based profile data (LBR-derived ranges)
         self.range_counts: Counter[tuple[tuple[int, int], str | None]] = Counter()
         # ((from_addr, to_addr), from_sym, to_sym) -> count
@@ -139,7 +139,7 @@ class BinaryContext:
         # Timestamp tracking: first sample time per function
         self.first_address_time: dict[int, int] = {}
         # Root function name -> first sample timestamp
-        self.func_timestamp: dict[tuple[str, str | None], int] = {}
+        self.func_timestamp: dict[FuncKey, int] = {}
         # Frame cache: addr -> frames | None
         self.frame_cache: dict[int, list[Frame] | None] = {}
         # Sample count for --min-samples filtering
@@ -233,7 +233,7 @@ class FuncNode:
         # offset -> sample count for positions directly in this instance
         self.positions: Counter[int] = Counter()
         # offset -> {callee name -> count} for resolved call targets
-        self.targets: dict[int, Counter[tuple[str, str | None]]] = defaultdict(Counter)
+        self.targets: dict[int, Counter[FuncKey]] = defaultdict(Counter)
         # (offset, callee name) -> child node for inlined callees
         self.children: dict[tuple[int, str, str | None], FuncNode] = dict()
         # Offsets that must be emitted even with count=0 and no targets.
@@ -260,7 +260,7 @@ class FuncNode:
         return any(child.has_output() for child in self.children.values())
 
 def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
-             count: int, target: tuple[str, str | None] | None,
+             count: int, target: FuncKey | None,
              inline_source_files: list[str | None] | None = None) -> None:
     node = root
     for i, (name, off) in enumerate(path):
@@ -270,7 +270,7 @@ def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
     if target is not None:
         node.targets[offset][target] += count
 
-def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[tuple[str, str | None]]]]:
+def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[FuncKey]]]:
     positions = []
     for off in sorted(node.positions):
         count = node.positions[off]
@@ -294,7 +294,7 @@ def emitted_children(node: FuncNode) -> list[tuple[int, str, FuncNode]]:
             if child.has_output()]
 
 def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
-               entry_index: dict[tuple[str, str | None], int],
+               entry_index: dict[FuncKey, int],
                toplevel: bool, ctx: BinaryContext) -> None:
     node_key = (node.name, node.source_file)
     if toplevel:
@@ -340,7 +340,9 @@ def _collect_strings_v2(node: FuncNode, out: set[str]) -> None:
     for _, _, child in emitted_children(node):
         _collect_strings_v2(child, out)
 
-def gen_strtable_v3(ctx: BinaryContext):
+def gen_strtable_v3(
+    ctx: BinaryContext,
+) -> tuple[list[str], dict[str, int], list[tuple[str, int]], dict[FuncKey, int]]:
     """Generate file table and function entry list for GCOV v3 format.
 
     Returns:
@@ -350,7 +352,7 @@ def gen_strtable_v3(ctx: BinaryContext):
         entry_index: (name, source_file) → position in entries list
     """
     source_files: set[str] = set()
-    func_to_file: dict[tuple[str, str | None], str | None] = {}
+    func_to_file: dict[FuncKey, str | None] = {}
 
     # Collect from tree roots
     for (name, src_file), node in ctx.tree.items():
@@ -365,7 +367,7 @@ def gen_strtable_v3(ctx: BinaryContext):
 
     # Build ordered entry list (allows duplicate names with different files)
     entries: list[tuple[str, int]] = []
-    entry_index: dict[tuple[str, str | None], int] = {}
+    entry_index: dict[FuncKey, int] = {}
     for key in sorted(ctx.tree.keys()):
         name, src_file = key
         file_idx = file_index.get(src_file, -1) if src_file else -1
@@ -482,7 +484,7 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
         wcounter(f, ds['num_counts'])
 
 def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
-                       func_to_file: dict[tuple[str, str | None], str | None]) -> None:
+                       func_to_file: dict[FuncKey, str | None]) -> None:
     """Recursively collect source files and func_to_file mappings for v3 format."""
     if node.source_file:
         files.add(node.source_file)
@@ -826,7 +828,7 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
     print(f"Wrote {output_path}")
     return True
 
-def trace_end():
+def trace_end() -> None:
     vprint("%d raw branches, %d filtered, %d errored, %d crossed" %
           (stats.raw_total_branches, stats.raw_ignored_branches, stats.errored, stats.crossed))
 
@@ -972,7 +974,7 @@ def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
 
 
 
-def process_event(param_dict):
+def process_event(param_dict: dict[str, Any]) -> None:
     """Process LBR branch stack to build range_counts and branch_counts.
 
     Routes branches to the correct per-binary context. Cross-binary

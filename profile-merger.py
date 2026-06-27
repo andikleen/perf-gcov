@@ -21,7 +21,7 @@ class FuncNode:
         self.name = name
         self.source_file = source_file
         self.positions: Counter[int] = Counter()
-        self.targets: dict[int, Counter[tuple[str, str | None]]] = defaultdict(Counter)
+        self.targets: dict[int, Counter[FuncKey]] = defaultdict(Counter)
         self.children: dict[tuple[int, str, str | None], "FuncNode"] = {}
         self.head_count = head_count
         self.total_count = 0
@@ -52,7 +52,7 @@ def _skip_section(f: BinaryIO) -> None:
     if length > 0:
         f.read(length)
 
-def read_profile(path: str) -> tuple[dict[tuple[str, str | None], FuncNode], int]:
+def read_profile(path: str) -> tuple[dict[FuncKey, FuncNode], int]:
     """Read a gcov file and return (tree, version)."""
     try:
         f: BinaryIO = open(path, "rb")
@@ -115,17 +115,23 @@ def _read_name_table(f: BinaryIO, version: int, path: str
 
     return names, file_table
 
-def _read_function_section(f: BinaryIO, names, file_table, version, path):
+def _read_function_section(
+    f: BinaryIO, names: list[tuple[str, int]], file_table: list[str],
+    version: int, path: str,
+) -> dict[FuncKey, FuncNode]:
     _expect_tag(f, path, GCOV_TAG_AFDO_FUNCTION, "AFDO function tag")
     r32(f)  # length
     num_functions = r32(f)
-    tree: dict[tuple[str, str | None], FuncNode] = {}
+    tree: dict[FuncKey, FuncNode] = {}
     for _ in range(num_functions):
         _read_function_instance(f, tree, names, file_table, version, path)
     return tree
 
-def _read_function_instance(f: BinaryIO, tree, names, file_table, version, path,
-                            parent=None, callsite_offset=0):
+def _read_function_instance(
+    f: BinaryIO, tree: dict[FuncKey, FuncNode], names: list[tuple[str, int]],
+    file_table: list[str], version: int, path: str,
+    parent: FuncNode | None = None, callsite_offset: int = 0,
+) -> None:
     is_toplevel = parent is None
 
     if is_toplevel:
@@ -156,6 +162,7 @@ def _read_function_instance(f: BinaryIO, tree, names, file_table, version, path,
             if timestamp:
                 node.timestamp = timestamp
     else:
+        assert parent is not None
         node = parent.child(callsite_offset, name, source_file)
 
     for _ in range(num_pos):
@@ -196,8 +203,8 @@ def _read_working_set(f: BinaryIO, path: str) -> None:
         print(f"warning: {path}: unexpected tag 0x{tag:08x} where working set expected",
               file=sys.stderr)
 
-def merge_profiles(dest: dict[tuple[str, str | None], FuncNode],
-                   src: dict[tuple[str, str | None], FuncNode]) -> None:
+def merge_profiles(dest: dict[FuncKey, FuncNode],
+                   src: dict[FuncKey, FuncNode]) -> None:
     """Merge src tree into dest tree. Sums counts (AFDO merge semantics)."""
     for key, src_node in src.items():
         dest_node = dest.get(key)
@@ -214,7 +221,7 @@ def _merge_node(dest: FuncNode, src: FuncNode) -> None:
     merge_nodes(dest, src)
 
 def filtered_positions(node: FuncNode,
-                        threshold: int) -> list[tuple[int, int, Counter[tuple[str, str | None]]]]:
+                        threshold: int) -> list[tuple[int, int, Counter[FuncKey]]]:
     result = []
     for off in sorted(node.positions):
         count = node.positions[off]
@@ -242,8 +249,8 @@ def collect_strings(node: FuncNode, out: set[str], threshold: int) -> None:
         collect_strings(child, out, threshold)
 
 def collect_strings_v3(node: FuncNode, files: set[str],
-                        func_to_file: dict[tuple[str, str | None], str | None],
-                        tree: dict[tuple[str, str | None], FuncNode],
+                        func_to_file: dict[FuncKey, str | None],
+                        tree: dict[FuncKey, FuncNode],
                         threshold: int) -> None:
     if node.source_file:
         files.add(node.source_file)
@@ -263,7 +270,7 @@ def collect_strings_v3(node: FuncNode, files: set[str],
         collect_strings_v3(child, files, func_to_file, tree, threshold)
 
 def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
-               entry_index: dict[tuple[str, str | None], int],
+               entry_index: dict[FuncKey, int],
                toplevel: bool,
                gcov_version: int, threshold: int) -> None:
     node_key = (node.name, node.source_file)
@@ -305,9 +312,11 @@ def gen_strtable(tree: dict[str, FuncNode],
     return string_table, string_index
 
 
-def gen_strtable_v3(tree: dict[tuple[str, str | None], FuncNode], threshold: int):
+def gen_strtable_v3(
+    tree: dict[FuncKey, FuncNode], threshold: int,
+) -> tuple[list[str], dict[str, int], list[tuple[str, int]], dict[FuncKey, int]]:
     source_files: set[str] = set()
-    func_to_file: dict[tuple[str, str | None], str | None] = {}
+    func_to_file: dict[FuncKey, str | None] = {}
 
     for (name, src_file), node in tree.items():
         if src_file:
@@ -319,7 +328,7 @@ def gen_strtable_v3(tree: dict[tuple[str, str | None], FuncNode], threshold: int
     file_index = {fname: i for i, fname in enumerate(file_table)}
 
     entries: list[tuple[str, int]] = []
-    entry_index: dict[tuple[str, str | None], int] = {}
+    entry_index: dict[FuncKey, int] = {}
     for key in sorted(tree.keys()):
         name, src_file = key
         file_idx = file_index.get(src_file, -1) if src_file else -1
@@ -335,7 +344,7 @@ def gen_strtable_v3(tree: dict[tuple[str, str | None], FuncNode], threshold: int
 
     return file_table, file_index, entries, entry_index
 
-def compute_summary(tree: dict[tuple[str, str | None], FuncNode]) -> dict:
+def compute_summary(tree: dict[FuncKey, FuncNode]) -> dict:
     total_count = 0
     max_count = 0
     max_function_count = 0
@@ -416,7 +425,7 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
         wcounter(f, ds['min_count'])
         wcounter(f, ds['num_counts'])
 
-def write_profile(path: str, tree: dict[tuple[str, str | None], FuncNode],
+def write_profile(path: str, tree: dict[FuncKey, FuncNode],
                   gcov_version: int, threshold: int) -> None:
     if not tree:
         sys.exit(f"error: no functions to write (empty tree)")
@@ -496,7 +505,7 @@ def main() -> None:
         sys.exit("error: need at least one input file")
 
     versions = set()
-    trees: list[tuple[str, dict[tuple[str, str | None], FuncNode]]] = []
+    trees: list[tuple[str, dict[FuncKey, FuncNode]]] = []
     for path in args.input_files:
         tree, ver = read_profile(path)
         versions.add(ver)

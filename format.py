@@ -6,7 +6,9 @@ import copy
 import struct
 import sys
 from collections import Counter
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Protocol
+
+FuncKey = tuple[str, str | None]
 
 GCOV_TAG_AFDO_SUMMARY = 0xa8000000
 GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
@@ -86,7 +88,18 @@ def fmt_offset(offset: int) -> str:
     return "%d" % (offset >> 16)
 
 
-def merge_nodes(dest, src) -> None:
+class _V2Node(Protocol):
+    """Minimal interface for FuncNode-like objects in v2 tree operations."""
+    targets: dict[int, Counter]
+    children: dict
+
+
+class _MergeableNode(_V2Node, Protocol):
+    """Interface for nodes that can be merged via merge_nodes."""
+    positions: Counter[int]
+
+
+def merge_nodes(dest: _MergeableNode, src: _MergeableNode) -> None:
     """Merge src node's positions, targets, and children into dest.
 
     Handles the common subset shared by all FuncNode-like trees:
@@ -115,7 +128,7 @@ def write_gcov_tail(f: BinaryIO) -> None:
     w32(f, 0)
 
 
-def make_v2_merged_tree(tree: dict) -> dict[str, Any]:
+def make_v2_merged_tree(tree: dict[FuncKey, Any]) -> dict[str, Any]:
     """Merge a composite-key (name, source_file) tree into a name-keyed tree for v2.
 
     Strips the source_file dimension from keys and recursively merges
@@ -132,7 +145,7 @@ def make_v2_merged_tree(tree: dict) -> dict[str, Any]:
     return merged
 
 
-def _merge_v2_node_targets(tree: dict[str, Any]) -> None:
+def _merge_v2_node_targets(tree: dict[str, _V2Node]) -> None:
     for node in tree.values():
         for off in list(node.targets):
             merged: Counter[str] = Counter()
@@ -142,7 +155,7 @@ def _merge_v2_node_targets(tree: dict[str, Any]) -> None:
         _merge_v2_child_targets(node)
 
 
-def _merge_v2_child_targets(node: Any) -> None:
+def _merge_v2_child_targets(node: _V2Node) -> None:
     for child in node.children.values():
         for off in list(child.targets):
             merged: Counter[str] = Counter()

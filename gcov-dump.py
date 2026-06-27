@@ -10,7 +10,7 @@ args = ap.parse_args()
 
 f = args.gcovfile
 
-def dump_pos(num_pos, callsites):
+def dump_pos(num_pos: int, callsites: int) -> None:
     for p in range(num_pos):
         offset = r32(f)
         num_targets = r32(f)
