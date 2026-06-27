@@ -147,6 +147,9 @@ class BinaryContext:
         self.frame_cache: dict[int, list[Frame] | None] = {}
         # Sample count for --min-samples filtering
         self.sample_count = 0
+        # Whether we have printed per-binary warnings (to avoid spamming)
+        self.warned_no_debug: bool = False
+        self.warned_neg_line: bool = False
 
     def root(self, name: str, source_file: str | None = None) -> "FuncNode":
         node = self.tree.get(name)
@@ -584,9 +587,9 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
         path: list[tuple[str, int]] = []
         for i in range(1, len(frames)):
-            path.append((names[i], frame_offset(frames[i - 1])))
+            path.append((names[i], frame_offset(frames[i - 1], ctx)))
 
-        leaf_off = frame_offset(frames[-1])
+        leaf_off = frame_offset(frames[-1], ctx)
         path_tuple = tuple(path)
         pos_key = (root_name, path_tuple, leaf_off)
 
@@ -665,7 +668,7 @@ def add_branch_targets(ctx: BinaryContext) -> None:
 
         path: list[tuple[str, int]] = []
         for i in range(1, len(sframes)):
-            path.append((names[i], frame_offset(sframes[i - 1])))
+            path.append((names[i], frame_offset(sframes[i - 1], ctx)))
 
         if droot_name and droot_name not in ctx.func_timestamp:
             branch_time = ctx.first_address_time.get(from_addr)
@@ -676,7 +679,7 @@ def add_branch_targets(ctx: BinaryContext) -> None:
             continue
         target = droot_name
 
-        leaf_off = frame_offset(sframes[-1])
+        leaf_off = frame_offset(sframes[-1], ctx)
         node = root
         for i, (name, off) in enumerate(path):
             src_file = source_files[i] if i < len(source_files) else None
@@ -745,63 +748,75 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
             return False
 
     update_branch_counts(ctx)
+    # Write to a temp file first, then atomically rename to output_path.
+    # This prevents partial/corrupt files if the process is interrupted.
+    tmp_path = output_path + ".tmp"
+    try:
+        with open(tmp_path, "wb") as f:
+            w32(f, GCOV_DATA_MAGIC)
+            w32(f, args.gcov_version)
+            w32(f, 0)
 
-    with open(output_path, "wb") as f:
-        w32(f, GCOV_DATA_MAGIC)
-        w32(f, args.gcov_version)
-        w32(f, 0)
+            if args.gcov_version == 3:
+                summary = compute_summary(ctx)
+                write_summary(f, summary)
+                vprint(f"Summary: {summary['num_functions']} functions, {summary['num_counts']} counts, total={summary['total_count']}")
 
-        if args.gcov_version == 3:
-            summary = compute_summary(ctx)
-            write_summary(f, summary)
-            vprint(f"Summary: {summary['num_functions']} functions, {summary['num_counts']} counts, total={summary['total_count']}")
+            w32(f, GCOV_TAG_AFDO_FILE_NAMES)
 
-        w32(f, GCOV_TAG_AFDO_FILE_NAMES)
+            if args.gcov_version == 2:
+                string_table, string_index = gen_strtable(ctx)
+                length = 4 + sum((len(s) + 5) for s in string_table)
+                w32(f, length)
+                w32(f, len(string_table))
+                for fn in string_table:
+                    wstring(f, fn)
 
-        if args.gcov_version == 2:
-            string_table, string_index = gen_strtable(ctx)
-            length = 4 + sum((len(s) + 5) for s in string_table)
-            w32(f, length)
-            w32(f, len(string_table))
-            for fn in string_table:
-                wstring(f, fn)
+            elif args.gcov_version == 3:
+                file_table, file_index, func_file_map, string_table, string_index = gen_strtable_v3(ctx)
 
-        elif args.gcov_version == 3:
-            file_table, file_index, func_file_map, string_table, string_index = gen_strtable_v3(ctx)
+                length = 4
+                length += sum(len(fname) + 5 for fname in file_table)
+                length += 4
+                length += sum(len(func) + 5 + 4 for func in string_table)
 
-            length = 4
-            length += sum(len(fname) + 5 for fname in file_table)
-            length += 4
-            length += sum(len(func) + 5 + 4 for func in string_table)
+                w32(f, length)
 
-            w32(f, length)
+                w32(f, len(file_table))
+                for fname in file_table:
+                    wstring(f, fname)
 
-            w32(f, len(file_table))
-            for fname in file_table:
-                wstring(f, fname)
+                w32(f, len(string_table))
+                for func_name in string_table:
+                    wstring(f, func_name)
+                    file_idx = func_file_map.get(func_name, -1)
+                    w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)
 
-            w32(f, len(string_table))
-            for func_name in string_table:
-                wstring(f, func_name)
-                file_idx = func_file_map.get(func_name, -1)
-                w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)
+            w32(f, GCOV_TAG_AFDO_FUNCTION)
+            lenoff = f.tell()
+            w32(f, 0)
 
-        w32(f, GCOV_TAG_AFDO_FUNCTION)
-        lenoff = f.tell()
-        w32(f, 0)
-        vprint("Writing %d functions to %s" % (len(ctx.tree), output_path))
-        w32(f, len(ctx.tree))
-        for name in sorted(ctx.tree):
-            wfunc_node(f, ctx.tree[name], 0, string_index, True, ctx)
+            vprint("Writing %d functions to %s" % (len(ctx.tree), output_path))
+            w32(f, len(ctx.tree))
+            for name in sorted(ctx.tree):
+                wfunc_node(f, ctx.tree[name], 0, string_index, True, ctx)
 
-        if not pathlib.Path(f.name).is_fifo():
-            endoff = f.tell()
-            f.seek(lenoff, 0)
-            vprint("Data length %d" % (endoff - lenoff))
-            w32(f, endoff - lenoff)
-            f.seek(endoff, 0)
+            if not pathlib.Path(f.name).is_fifo():
+                endoff = f.tell()
+                f.seek(lenoff, 0)
+                vprint("Data length %d" % (endoff - lenoff))
+                w32(f, endoff - lenoff)
+                f.seek(endoff, 0)
 
-        write_gcov_tail(f)
+            write_gcov_tail(f)
+
+        os.rename(tmp_path, output_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
     print(f"Wrote {output_path}")
     return True
@@ -828,30 +843,28 @@ def trace_end():
         add_dwarf_zero_scaffolding(ctx)
         suffix.elide_tree_suffixes(ctx.tree, args.suffix_elision)
 
-    # Determine output filenames
+    # Determine output filenames.
+    # Priority: --output-dir > --gcov (single binary) > default.
+    if args.gcov and len(active_binaries) > 1:
+        print("warning: --gcov ignored in multi-binary mode", file=sys.stderr)
     output_paths: dict[str, str] = {}
-    if len(active_binaries) == 1:
-        dsoname = list(active_binaries.keys())[0]
-        output_paths[dsoname] = args.gcov if args.gcov else args.output
-    else:
-        if args.gcov:
-            print("warning: --gcov ignored in multi-binary mode", file=sys.stderr)
-        used_paths: set[str] = set()
-        for dsoname in active_binaries:
-            basename = os.path.basename(dsoname)
-            if args.output_dir:
-                os.makedirs(args.output_dir, exist_ok=True)
-                path = os.path.join(args.output_dir, f"{basename}.gcov")
-            else:
-                path = f"{basename}.gcov"
-
-            if path in used_paths:
-                print(f"warning: output conflict for {dsoname}, skipping", file=sys.stderr)
-                # TODO: use buildid for conflict resolution
-                continue
-
-            used_paths.add(path)
-            output_paths[dsoname] = path
+    used_paths: set[str] = set()
+    for dsoname in active_binaries:
+        basename = os.path.basename(dsoname)
+        if args.output_dir:
+            os.makedirs(args.output_dir, exist_ok=True)
+            path = os.path.join(args.output_dir, f"{basename}.gcov")
+        elif args.gcov and len(active_binaries) == 1:
+            path = args.gcov
+        elif len(active_binaries) == 1:
+            path = args.output
+        else:
+            path = f"{basename}.gcov"
+        if path in used_paths:
+            print(f"warning: output conflict for {dsoname}, skipping", file=sys.stderr)
+            continue
+        used_paths.add(path)
+        output_paths[dsoname] = path
 
     # Write output files
     written: list[str] = []
@@ -872,6 +885,14 @@ def trace_end():
         vprint(f"Note: {stats.missing_symbols} frames had no symbol names")
     if stats.incomplete_stacks > 0:
         vprint(f"Note: {stats.incomplete_stacks} inline stacks were incomplete")
+
+    # Warn about binaries with samples but no debug info
+    for dsoname, ctx in active_binaries.items():
+        if ctx.sample_count > 0 and not ctx.tree and not ctx.warned_no_debug:
+            basename = os.path.basename(dsoname)
+            vprint(f"warning: {basename} has {ctx.sample_count} samples but no debug info "
+                   f"({dsoname})")
+            ctx.warned_no_debug = True
 
     vprint("%d processed branches, %d output branches, %.2f%% ignored" %
            (stats.output_total_positions,
@@ -917,11 +938,12 @@ def getframes(ctx: BinaryContext, ip: int) -> list[Frame] | None:
     ctx.frame_cache[ip] = frames
     return frames
 
-def frame_offset(fr: Frame) -> int:
+def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
     """Calculate offset of a frame relative to its function declaration line.
 
     Args:
         fr: Frame with line, declline, and discriminator info
+        ctx: Binary context (for per-binary warning throttling)
 
     Returns:
         Encoded offset (line << 16 | discriminator)
@@ -932,10 +954,14 @@ def frame_offset(fr: Frame) -> int:
     if line < 0:
         # Negative offsets indicate DWARF inconsistency (line before declaration)
         # This can happen with inlined code or compiler-generated code
-        if not args.quiet:
+        if args.verbose:
             print(f"WARNING: Negative line offset clamped to 0: "
                   f"function={fr.sym}, line={fr.line}, base={base}",
                   file=sys.stderr)
+        elif not ctx.warned_neg_line and not args.quiet:
+            print(f"WARNING: Negative line offset clamped to 0 (use --verbose for details)",
+                  file=sys.stderr)
+            ctx.warned_neg_line = True
         line = 0
     return gen_offset(line, fr.disc)
 

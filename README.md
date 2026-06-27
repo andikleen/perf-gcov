@@ -8,10 +8,6 @@ a autofdo gcov file for gcc.
 This is implemented in python as a perf script using the python interpreter linked into
 the Linux perf tool.
 
-Eventual goal is to support an online modus that supports contiguous profiling of the system
-and then rebuilding pieces with profile feedback. Right now it is just simpler to build
-than autofdo and uses a lot less memory and disk space (if used in streaming mode)
-
 ## Setup
 
 Build a gcc with the patch in https://github.com/andikleen/gcc/tree/libbacktrace-disc-8
@@ -43,7 +39,7 @@ gcov.py --binary workload file.gcov
 gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 ```
 
-or alternatively:
+or
 
 ```
 gcc -O2 -o workload ...
@@ -53,23 +49,30 @@ gcc -fauto-profile=workload.gcov -o workload.opt -O2 ...
 
 The streaming variant does not write the temporary sample data to disk.
 
+or 
+```
+gcov-online-profile.sh --output-dir gcovdir
+```
+
 The default output is gcov-version 3 for gcc 16+. If you use gcc 15 or older add --gcov-version 2
 
 The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so can be used as a replacement.
 
 ## Tools
+
 - gcov.py - convert perf.data to autofdo gcov files
 - profile-merger.py - merge multiple gcov files together
 - dump-gcov.py - dump a autofdo gcov file
 - gcov-stream-profile.sh - script to profile and generate gcov without temporary files
+- gcov-online-profile.sh - background gcov generation for all running binaris with debuginfo.
 
 ## Differences to autofdo
 
 - Simpler to build.
-- Much less testing.
-- Some differences in output due to differences in dwarf parsing.
+- Less mature.
 - Much less memory use for large dumps.
 - Supports streaming mode to not save individual samples to disk.
-- Integrated into perf so no compatibility issues.
+- Supports online mode for background profiling
 - Much simpler (but only focussed on the gcc job)
+- Some differences in output due to differences in dwarf parsing.
 
