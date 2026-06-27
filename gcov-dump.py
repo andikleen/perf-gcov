@@ -129,5 +129,3 @@ for i in range(num_funcs):
     num_pos = r32(f)
     callsites = r32(f)
     dump_pos(num_pos, callsites)
-
-

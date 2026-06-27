@@ -973,7 +973,6 @@ def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
     return gen_offset(line, fr.disc)
 
 
-
 def process_event(param_dict: dict[str, Any]) -> None:
     """Process LBR branch stack to build range_counts and branch_counts.
 
