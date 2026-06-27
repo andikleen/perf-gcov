@@ -1,0 +1,14 @@
+*.o
+*.so
+*.gcov
+*.data
+*.data.old
+*.opt
+*.dump
+multibin_out/
+__pycache__/
+.opencode/
+backtrace
+backtrace.h
+libbacktrace.a
+file.gcov
