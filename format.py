@@ -5,7 +5,8 @@
 import copy
 import struct
 import sys
-from typing import BinaryIO
+from collections import Counter
+from typing import Any, BinaryIO
 
 GCOV_TAG_AFDO_SUMMARY = 0xa8000000
 GCOV_TAG_AFDO_FILE_NAMES = 0xaa000000
@@ -112,3 +113,107 @@ def write_gcov_tail(f: BinaryIO) -> None:
     w32(f, GCOV_TAG_AFDO_WORKING_SET)
     w32(f, 4)
     w32(f, 0)
+
+
+def make_v2_merged_tree(tree: dict) -> dict[str, Any]:
+    """Merge a composite-key (name, source_file) tree into a name-keyed tree for v2.
+
+    Strips the source_file dimension from keys and recursively merges
+    targets from Counter[tuple] to Counter[str].
+    """
+    merged: dict[str, Any] = {}
+    for key, node in tree.items():
+        name = key[0]
+        if name in merged:
+            merge_nodes(merged[name], node)
+        else:
+            merged[name] = copy.deepcopy(node)
+    _merge_v2_node_targets(merged)
+    return merged
+
+
+def _merge_v2_node_targets(tree: dict[str, Any]) -> None:
+    for node in tree.values():
+        for off in list(node.targets):
+            merged: Counter[str] = Counter()
+            for tkey, tcount in node.targets[off].items():
+                merged[tkey[0] if isinstance(tkey, tuple) else tkey] += tcount
+            node.targets[off] = merged
+        _merge_v2_child_targets(node)
+
+
+def _merge_v2_child_targets(node: Any) -> None:
+    for child in node.children.values():
+        for off in list(child.targets):
+            merged: Counter[str] = Counter()
+            for tkey, tcount in child.targets[off].items():
+                merged[tkey[0] if isinstance(tkey, tuple) else tkey] += tcount
+            child.targets[off] = merged
+        _merge_v2_child_targets(child)
+
+
+def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
+                               string_index: dict[str, int],
+                               threshold: int) -> None:
+    """Write one function instance in v2 format."""
+    if offset == 0:
+        head = node.head_count() if callable(node.head_count) else node.head_count
+        wcounter(f, head)
+        w32(f, string_index[node.name])
+    else:
+        w32(f, offset)
+        w32(f, string_index[node.name])
+
+    positions: list[tuple[int, int, Counter[str]]] = []
+    for off in sorted(node.positions):
+        count = node.positions[off]
+        targets: Counter[str] = Counter()
+        for name, c in node.targets.get(off, Counter()).items():
+            if c >= threshold:
+                targets[name] += c
+        has_output = count >= threshold or (count == 0 and targets)
+        if not has_output:
+            zeros = node.structural_zeros if hasattr(node, 'structural_zeros') else set()
+            if off not in zeros:
+                continue
+        positions.append((off, count, targets))
+
+    children: list[tuple[int, str, Any]] = []
+    for (coff, cname, csrc), child in sorted(node.children.items()):
+        try:
+            has_output = child.has_output(threshold)
+        except TypeError:
+            has_output = child.has_output()
+        if has_output:
+            children.append((coff, cname, child))
+
+    w32(f, len(positions))
+    w32(f, len(children))
+
+    for off, count, targets in positions:
+        w32(f, off)
+        w32(f, len(targets))
+        wcounter(f, count)
+        for tname, tcount in targets.most_common():
+            w32(f, HIST_TYPE_INDIR_CALL_TOPN)
+            wcounter(f, string_index[tname])
+            wcounter(f, tcount)
+
+    for coff, _, child in children:
+        write_v2_function_instance(f, child, coff, string_index, threshold)
+
+
+def write_v2_function_section(f: BinaryIO, tree: dict[str, Any],
+                              string_index: dict[str, int],
+                              threshold: int) -> None:
+    """Write GCOV_TAG_AFDO_FUNCTION section for v2 format."""
+    w32(f, GCOV_TAG_AFDO_FUNCTION)
+    lenoff = f.tell()
+    w32(f, 0)
+    w32(f, len(tree))
+    for name in sorted(tree):
+        write_v2_function_instance(f, tree[name], 0, string_index, threshold)
+    endoff = f.tell()
+    f.seek(lenoff)
+    w32(f, endoff - lenoff)
+    f.seek(endoff)

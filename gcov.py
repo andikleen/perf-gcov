@@ -735,93 +735,6 @@ def add_dwarf_zero_scaffolding(ctx: BinaryContext) -> None:
 
     vprint(f"Added {added_zeros} DWARF-informed zero scaffolding positions")
 
-def _merge_tree_for_v2(tree: dict[tuple[str, str | None], FuncNode]) -> dict[str, FuncNode]:
-    """Merge nodes with same name for v2 format (no file disambiguation)."""
-    merged: dict[str, FuncNode] = {}
-    for (name, src_file), node in tree.items():
-        if name in merged:
-            merge_nodes(merged[name], node)
-        else:
-            merged[name] = copy.deepcopy(node)
-    # Merge targets by name (strip source_file dimension) — recurse into children
-    _merge_node_targets_for_v2(merged)
-    return merged
-
-
-def _merge_node_targets_for_v2(tree: dict[str, FuncNode]) -> None:
-    for node in tree.values():
-        for off in list(node.targets):
-            merged_targets: Counter[str] = Counter()
-            for (tname, tsrc), tcount in node.targets[off].items():
-                merged_targets[tname] += tcount
-            node.targets[off] = merged_targets  # type: ignore[assignment]
-        _merge_child_targets_for_v2(node)
-
-
-def _merge_child_targets_for_v2(node: FuncNode) -> None:
-    for child in node.children.values():
-        for off in list(child.targets):
-            merged_targets: Counter[str] = Counter()
-            for (tname, tsrc), tcount in child.targets[off].items():
-                merged_targets[tname] += tcount
-            child.targets[off] = merged_targets  # type: ignore[assignment]
-        _merge_child_targets_for_v2(child)
-
-
-def _write_gcov_v2_functions(f: BinaryIO, tree: dict[str, FuncNode],
-                              string_index: dict[str, int], ctx: BinaryContext) -> None:
-    """Write FUNCTION section for v2 format using a merged tree."""
-    def wfunc_v2(node: FuncNode, offset: int, toplevel: bool) -> None:
-        if toplevel:
-            wcounter(f, node.head_count())
-            w32(f, string_index[node.name])
-        else:
-            w32(f, offset)
-            w32(f, string_index[node.name])
-        positions: list[tuple[int, int, Counter[str]]] = []
-        for off in sorted(node.positions):
-            count = node.positions[off]
-            targets: Counter[str] = Counter()
-            for name, c in node.targets.get(off, Counter()).items():
-                if c >= args.threshold:
-                    targets[name] += c  # type: ignore[index]
-            if count == 0:
-                if off not in node.structural_zeros and not targets:
-                    continue
-            elif count < args.threshold:
-                continue
-            positions.append((off, count, targets))
-        children = [(coff, cname, child)
-                    for (coff, cname, csrc), child in sorted(node.children.items())
-                    if child.has_output()]
-        w32(f, len(positions))
-        w32(f, len(children))
-        for off, count, targets in positions:
-            w32(f, off)
-            w32(f, len(targets))
-            wcounter(f, count)
-            for tname, tcount in targets.most_common():
-                w32(f, HIST_TYPE_INDIR_CALL_TOPN)
-                wcounter(f, string_index[tname])
-                wcounter(f, tcount)
-        for coff, _, child in children:
-            wfunc_v2(child, coff, False)
-
-    w32(f, GCOV_TAG_AFDO_FUNCTION)
-    lenoff = f.tell()
-    w32(f, 0)
-    vprint("Writing %d functions to %s" % (len(tree), ctx.dsoname))
-    w32(f, len(tree))
-    for name in sorted(tree):
-        wfunc_v2(tree[name], 0, True)
-    if not pathlib.Path(f.name).is_fifo():
-        endoff = f.tell()
-        f.seek(lenoff, 0)
-        vprint("Data length %d" % (endoff - lenoff))
-        w32(f, endoff - lenoff)
-        f.seek(endoff, 0)
-
-
 def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
     """Write gcov profile file for a specific binary. Returns True if written."""
 
@@ -850,7 +763,7 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
             w32(f, GCOV_TAG_AFDO_FILE_NAMES)
 
             if args.gcov_version == 2:
-                v2_tree = _merge_tree_for_v2(ctx.tree)
+                v2_tree = make_v2_merged_tree(ctx.tree)
                 string_table, string_index = gen_strtable(v2_tree)
                 length = 4 + sum((len(s) + 5) for s in string_table)
                 w32(f, length)
@@ -858,8 +771,8 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
                 for fn in string_table:
                     wstring(f, fn)
 
-                _write_gcov_v2_functions(f, v2_tree, string_index, ctx)
-                # v2 functions already written; skip the common FUNCTION section below
+                vprint("Writing %d functions to %s" % (len(v2_tree), output_path))
+                write_v2_function_section(f, v2_tree, string_index, args.threshold)
                 write_gcov_tail(f)
                 os.rename(tmp_path, output_path)
                 print(f"Wrote {output_path}")
