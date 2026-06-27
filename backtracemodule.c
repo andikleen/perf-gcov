@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/* Python interface to libbacktrace's pcinfo function for an external
-   binary. Note that only non PIC/PIE programs are currently supported.  */
+/* Python interface to libbacktrace's createstate/pcinfo_extra for an external
+   binary. */
 #include <backtrace.h>
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>

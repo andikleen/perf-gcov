@@ -890,7 +890,7 @@ def trace_end():
     for dsoname, ctx in active_binaries.items():
         if ctx.sample_count > 0 and not ctx.tree and not ctx.warned_no_debug:
             basename = os.path.basename(dsoname)
-            vprint(f"warning: {basename} has {ctx.sample_count} samples but no debug info "
+            vprint(f"{basename} has {ctx.sample_count} samples but no debug info "
                    f"({dsoname})")
             ctx.warned_no_debug = True
 

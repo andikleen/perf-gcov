@@ -47,3 +47,6 @@ typecheck:
 
 test:
 	./tester
+	./test-gcov-online.sh
+	./test-multi-binary.sh
+	./test-merger.sh

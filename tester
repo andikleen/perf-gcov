@@ -22,6 +22,12 @@ check_gcc_v3_support() {
 	fi
 }
 
+if check_gcc_v3_support ; then
+	GCC_GCOV_VERSION=3
+else
+	GCC_GCOV_VERSION=2
+fi
+
 cleanup_test_files() {
 	local i=$1
 	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2 ${i}.stream.gcov
@@ -57,8 +63,7 @@ local i=$1
 $CC -g -O2 -o ${i} ${i}.c
 
 echo "=== Testing gcov-stream-profile.sh (v2) ==="
-# XXX probe gcc for needed version
-./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov --gcov-version 2 -- ./${i}
+./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov --gcov-version $GCC_GCOV_VERSION -- ./${i}
 
 echo "Stream pipeline dump:"
 ./gcov-dump.py --max-count 3000000 ${i}.stream.gcov
@@ -100,21 +105,21 @@ $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-versi
 if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
 fi
-$CC -g -O2 -flto -fauto-profile=${i}.gcov ${sources} -o ${i}.opt
-./${i}.opt
+if [ $GCC_GCOV_VERSION == 2 ] ; then
+	$CC -g -O2 -flto -fauto-profile=${i}.gcov ${sources} -o ${i}.opt
+	./${i}.opt
+fi
 
-# Test v3 (new format with source files)
+# Test v3
 echo "=== Testing GCOV v3 format ==="
 $PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-version 3
 echo "v3 dump:"
 ./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
 
-if check_gcc_v3_support ; then
-	echo "GCC 16+ detected, testing with -fauto-profile"
+if [ $GCC_GCOV_VERSION == 3 ] ; then
 	$CC -g -O2 -flto -fauto-profile=${i}.gcov3 ${sources} -o ${i}.opt3
 	./${i}.opt3
-	echo "v3 profile works with GCC!"
 else
 	echo "GCC < 16, skipping -fauto-profile test for v3 (format validation only)"
 fi
@@ -134,8 +139,10 @@ $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-versi
 if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
 fi
-$CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
-./${i}.opt
+if [ $GCC_GCOV_VERSION == 2 ] ; then
+	$CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
+	./${i}.opt
+fi
 
 # Test v3 (new format with source files)
 echo "=== Testing GCOV v3 format ==="
@@ -144,11 +151,9 @@ echo "v3 dump:"
 ./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
 
-if check_gcc_v3_support ; then
-	echo "GCC 16+ detected, testing with -fauto-profile"
+if [ $GCC_GCOV_VERSION == 3 ] ; then
 	$CC -g -O2 -fauto-profile=${i}.gcov3 ${i}.c -o ${i}.opt3
 	./${i}.opt3
-	echo "v3 profile works with GCC!"
 else
 	echo "GCC < 16, skipping -fauto-profile test for v3 (format validation only)"
 fi
