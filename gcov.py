@@ -39,12 +39,11 @@ ap.add_argument('--binary', action='append', default=[],
                      "If omitted, auto-discover all binaries.")
 ap.add_argument('--profile', '-i', help="Profile data. Default perf.data")
 ap.add_argument('--gcov', help="gcov output file")
-ap.add_argument('--profiler', help="set profiler type", choices=["perf"])
+ap.add_argument('--profiler', help="set profiler type (nop)", choices=["perf"])
 ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
-ap.add_argument('--verbose', action='store_true', help="Print every sample")
-ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
+ap.add_argument('--verbose', action='store_true', help="Be more verbose")
 ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], default=3,
-                help="GCOV version: 2 (function names only) or 3 (with source files, default)")
+                help="GCOV version: 2 (upto gcc 15) or 3 (gcc 16+, default)")
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
 ap.add_argument('--insn-range-max', type=int, default=1<<20, help="Max range between branches to probe")
@@ -937,8 +936,7 @@ def frame_offset(fr: Frame) -> int:
     if line < 0:
         # Negative offsets indicate DWARF inconsistency (line before declaration)
         # This can happen with inlined code or compiler-generated code
-        if args.verbose:
-            import sys
+        if not args.quiet:
             print(f"WARNING: Negative line offset clamped to 0: "
                   f"function={fr.sym}, line={fr.line}, base={base}",
                   file=sys.stderr)
