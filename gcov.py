@@ -65,8 +65,6 @@ if os.getenv('PERF_EXEC_PATH') is None:
     perf = os.getenv('PERF')
     if perf is None:
         perf = "perf"
-    if len(sys.argv) == 1:
-        sys.exit("Usage: gcov.py --gcov gcovfile --profile perf.data --binary elfbinary")
     data = "perf.data"
     for arg in sys.argv[1:]:
         if arg.startswith("--profile="):
@@ -480,7 +478,6 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
         wcounter(f, ds['min_count'])
         wcounter(f, ds['num_counts'])
 
-
 def collect_strings_v3(ctx: BinaryContext, node: FuncNode, func_names: set[str], files: set[str],
                        func_to_file: dict[str, str | None]) -> None:
     """Recursively collect function names and source files for v3 format."""
@@ -617,7 +614,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
     stats.dwarf_lookup_failures += dwarf_failures
     stats.missing_symbols += missing_syms
     stats.incomplete_stacks += incomplete
-
 
 def add_branch_targets(ctx: BinaryContext) -> None:
     """Add call targets from branch_counts to the profile tree for one binary."""
