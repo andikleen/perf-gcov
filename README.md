@@ -10,7 +10,8 @@ the Linux perf tool.
 
 ## Setup
 
-Build a gcc with the patch in https://github.com/andikleen/gcc/tree/libbacktrace-disc-8
+So far needs a patched libbacktrace (patches in submission)
+Build a gcc with the patches in https://github.com/andikleen/gcc/tree/libbacktrace-disc-8
 
 Then copy the <gccbuilddir>/libbacktrace/.libs/libbacktrace.a
 and <gccsrcdir>/libbacktrace/backtrace.h files to this directory.
@@ -68,11 +69,16 @@ The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so
 
 ## Differences to autofdo
 
-- Simpler to build.
-- Less mature.
+- Much less mature.
+- Not a nightmare to build.
+- Much simpler (but only focussed on the gcc job)
 - Much less memory use for large dumps.
 - Supports streaming mode to not save individual samples to disk.
-- Supports online mode for background profiling
-- Much simpler (but only focussed on the gcc job)
+- Supports online mode for automatic background profiling
 - Some differences in output due to differences in dwarf parsing.
+
+## Credits
+
+Andi Kleen with some AI help. Original concept and some algorithms
+inspired by [autofdo](https://github.com/google/autofdo)
 
