@@ -37,7 +37,9 @@ clean:
 		$(addsuffix .dump2,$(TESTS)) \
 		$(addsuffix .diff,$(TESTS)) \
 		$(TESTS) $(MULTI_TESTS) \
-		libtlib.so run-tests-wrapper.sh
+		libtlib.so run-tests-wrapper.sh \
+		tcall.d1 tcall.d2 tcall.1.* tcall.2.* tcall.id.* tcall.two.* \
+		tcall.copy.* tcall.mix tcall.thr tcall.bad tcall.two.opt
 	rm -rf $(DIRS)
 
 typecheck:

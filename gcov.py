@@ -19,6 +19,7 @@
 import os
 import sys
 from collections import Counter, defaultdict
+from functools import cache
 from typing import NamedTuple, Any, BinaryIO
 import argparse
 import fnmatch
@@ -127,6 +128,8 @@ class BinaryContext:
     def __init__(self, dsoname: str):
         self.dsoname = dsoname
         self.btstate: Any = None
+        # Load offset for shared library relocation (runtime_addr - file_addr)
+        self.load_offset: int = 0
         # outermost function name -> profile tree root
         self.tree: dict[str, FuncNode] = {}
         # Range-based profile data (LBR-derived ranges)
@@ -151,16 +154,32 @@ class BinaryContext:
             node.source_file = source_file
         return node
 
-    # TODO: add load_base to support shared library relocation. backtrace.pcinfo
-    # expects file-relative IPs; for shared libraries we need to subtract the
-    # runtime load offset before resolving addresses.
-
 # dsoname -> BinaryContext
 binaries: dict[str, BinaryContext] = {}
 
 def is_file_dso(dsoname: str) -> bool:
     """Check if DSO is a real file (not kernel, vdso, etc.)."""
     return not dsoname.startswith('[') and '/' in dsoname
+
+@cache
+def is_position_independent(dsoname: str) -> bool:
+    """Return True if the ELF file is ET_DYN (PIE or shared library).
+    Results are cached per dsoname."""
+    try:
+        with open(dsoname, "rb") as f:
+            ident = f.read(20)
+    except OSError:
+        return False
+    if len(ident) < 20 or ident[:4] != b'\x7fELF':
+        return False
+    ei_data = ident[5]
+    if ei_data == 1:  # ELFDATA2LSB
+        e_type = ident[16] | (ident[17] << 8)
+    elif ei_data == 2:  # ELFDATA2MSB
+        e_type = (ident[16] << 8) | ident[17]
+    else:
+        return False
+    return e_type == 3  # ET_DYN
 
 def should_process_binary(dsoname: str) -> bool:
     """Check if binary matches --binary patterns."""
@@ -170,7 +189,7 @@ def should_process_binary(dsoname: str) -> bool:
     return any(fnmatch.fnmatch(dsoname, pat) or fnmatch.fnmatch(basename, pat)
                for pat in args.binary)
 
-def get_or_create_binary(dsoname: str) -> BinaryContext | None:
+def get_or_create_binary(dsoname: str, dso_map_start: int = 0, map_pgoff: int = 0) -> BinaryContext | None:
     """Get or create BinaryContext for a DSO."""
     if dsoname in binaries:
         return binaries[dsoname]
@@ -189,6 +208,11 @@ def get_or_create_binary(dsoname: str) -> BinaryContext | None:
 
     ctx = BinaryContext(dsoname)
     ctx.btstate = btstate
+    # Only ET_DYN files (PIE/shared library) need load offset subtraction.
+    if dso_map_start and map_pgoff and is_position_independent(dsoname):
+        ctx.load_offset = dso_map_start - map_pgoff
+        vprint(f"  {os.path.basename(dsoname)}: load_offset=0x{ctx.load_offset:x}")
+
     binaries[dsoname] = ctx
     return ctx
 
@@ -877,7 +901,6 @@ def getframes(ctx: BinaryContext, ip: int) -> list[Frame] | None:
         return ctx.frame_cache[ip]
 
     p = backtrace.pcinfo(ctx.btstate, ip)
-    #print("pcinfo %x" % ip, p)
     if p is None or len(p) == 0:
         ctx.frame_cache[ip] = None
         return None
@@ -930,6 +953,11 @@ def process_event(param_dict):
     if len(brstack) == 0:
         return
 
+    # Pass mmap info to get_or_create_binary so it can compute
+    # the load offset once per DSO (only for ET_DYN).
+    dso_map_start = param_dict.get("dso_map_start", 0)
+    map_pgoff = param_dict.get("map_pgoff", 0)
+
     # Route each branch to its binary context
     focused_by_binary: dict[str, list[tuple[BinaryContext, dict, dict]]] = {}
     for br, bsym in zip(brstack, brstacksym):
@@ -940,7 +968,7 @@ def process_event(param_dict):
             stats.raw_ignored_branches += 1
             continue
 
-        ctx = get_or_create_binary(br["from_dsoname"])
+        ctx = get_or_create_binary(br["from_dsoname"], dso_map_start, map_pgoff)
         if ctx is None:
             stats.ignored += 1
             stats.raw_ignored_branches += 1
@@ -968,13 +996,19 @@ def process_event(param_dict):
 
         if sample_time:
             for _, br, _ in branches:
-                ctx.first_address_time.setdefault(br["from"], sample_time)
-                ctx.first_address_time.setdefault(br["to"], sample_time)
+                # Subtract load offset to get file-relative addresses
+                from_addr = br["from"] - ctx.load_offset
+                to_addr = br["to"] - ctx.load_offset
+                ctx.first_address_time.setdefault(from_addr, sample_time)
+                ctx.first_address_time.setdefault(to_addr, sample_time)
 
         for _, br, bsym in branches:
             from_sym = bsym.get("from", "").split("+")[0] if "+" in bsym.get("from", "") else None
             to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
-            ctx.branch_counts[((br["from"], br["to"]), from_sym, to_sym)] += 1
+            # Subtract load offset to get file-relative addresses
+            from_addr = br["from"] - ctx.load_offset
+            to_addr = br["to"] - ctx.load_offset
+            ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym)] += 1
 
         if len(branches) < 2:
             continue
@@ -983,8 +1017,9 @@ def process_event(param_dict):
             _, br, bsym = branches[i]
             _, prev_br, _ = branches[i - 1]
 
-            begin = br["to"]
-            end = prev_br["from"]
+            # Subtract load offset to get file-relative addresses
+            begin = br["to"] - ctx.load_offset
+            end = prev_br["from"] - ctx.load_offset
 
             if end < begin:
                 continue
