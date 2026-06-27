@@ -21,11 +21,14 @@ backtracemodule.o: backtracemodule.c
 
 TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall test-lto
 
+MULTI_TESTS = tlibmain tlibmain-only tmulti1 tmulti2 tmulti3
+DIRS = multibin_out
+
 clean:
 	rm -f backtracemodule.o ${target} \
-		$(addsuffix .data,$(TESTS)) \
+		$(addsuffix .data,$(TESTS) $(MULTI_TESTS)) multibin.data \
 		$(addsuffix .data.old,$(TESTS)) \
-		$(addsuffix .gcov,$(TESTS)) \
+		$(addsuffix .gcov,$(TESTS) $(MULTI_TESTS) libtlib.so ld-linux-x86-64.so.2 libc.so.6) \
 		$(addsuffix .gcov2,$(TESTS)) \
 		$(addsuffix .opt,$(TESTS)) \
 		$(addsuffix .offsets,$(TESTS)) \
@@ -33,7 +36,9 @@ clean:
 		$(addsuffix .dump,$(TESTS)) \
 		$(addsuffix .dump2,$(TESTS)) \
 		$(addsuffix .diff,$(TESTS)) \
-		$(TESTS)
+		$(TESTS) $(MULTI_TESTS) \
+		libtlib.so run-tests-wrapper.sh
+	rm -rf $(DIRS)
 
 typecheck:
 	mypy gcov.py gcov-dump.py format.py profile-merger.py suffix.py test-suffix.py --check-untyped-defs

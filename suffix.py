@@ -61,6 +61,8 @@ _NAME_FN = {
 
 def get_original_name(name: str, policy: str) -> str:
     fn = _NAME_FN.get(policy)
+    if fn is None:
+        raise ValueError(f"unknown suffix elision policy: {policy}")
     return fn(name)
 
 def _elide_node(node, policy: str) -> None:

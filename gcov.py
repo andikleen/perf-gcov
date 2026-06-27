@@ -21,6 +21,7 @@ import sys
 from collections import Counter, defaultdict
 from typing import NamedTuple, Any, BinaryIO
 import argparse
+import fnmatch
 import itertools
 import os.path
 import subprocess
@@ -61,13 +62,14 @@ except ImportError:
 
 ap = argparse.ArgumentParser()
 ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
-ap.add_argument('--binary', help="Generate gcov file for binary", required=True)
+ap.add_argument('--binary', action='append', default=[],
+                help="Binary to profile (fnmatch pattern, repeatable). "
+                     "If omitted, auto-discover all binaries.")
 ap.add_argument('--profile', '-i', help="Profile data. Default perf.data") # handled by perf
 ap.add_argument('--gcov', help="gcov output file")
 ap.add_argument('--profiler', help="set profiler type", choices=["perf"]) # for create_gcov compatibility. nop.
 ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
 ap.add_argument('--verbose', action='store_true', help="Print every sample")
-ap.add_argument('--top', default=0, type=int, help="Print N top samples")
 ap.add_argument('--dump-dwarf', action='store_true', help="Dump dwarf symbol table")
 ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], default=3,
                 help="GCOV version: 2 (function names only) or 3 (with source files, default)")
@@ -76,14 +78,20 @@ ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
 ap.add_argument('--insn-range-max', type=int, default=1<<20, help="Max range between branches to probe")
 ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
                 help="Symbol suffix elision policy (default: %(default)s)")
+ap.add_argument('--min-samples', type=int, default=100,
+                help="Skip binaries with fewer samples (default: 100)")
+ap.add_argument('--output-dir', help="Output directory for multi-binary mode")
+ap.add_argument('--write-empty', action='store_true',
+                help="Write empty profile files for binaries with no data")
+ap.add_argument('--quiet', action='store_true',
+                help="Suppress statistics output")
 
 args = ap.parse_args()
 
-if args.binary is None:
-    sys.exit("Need --binary")
-
-btstate = backtrace.createstate(args.binary)
-# XXX which exception to catch?
+def vprint(*vals, **kwargs):
+    """Print only if not in quiet mode."""
+    if not args.quiet:
+        print(*vals, **kwargs)
 
 def trace_begin():
     pass
@@ -106,26 +114,33 @@ class Stats:
         self.output_total_positions = 0
         self.output_ignored_positions = 0
         self.output_branches = 0
-        # outermost function name -> profile tree root
-        self.tree : dict[str, "FuncNode"] = dict()
-        # Range-based profile data (LBR-derived ranges)
-        # ((begin_addr, end_addr), begin_sym) -> count
-        # begin_sym is the symbol name from perf for the begin address
-        self.range_counts: Counter[tuple[tuple[int, int], str | None]] = Counter()
-        # ((from_addr, to_addr), from_sym, to_sym) -> count
-        # from_sym and to_sym are symbol names from perf
-        self.branch_counts: Counter[tuple[tuple[int, int], str | None, str | None]] = Counter()
-
-        # Timestamp tracking: first sample time per function
-        # Address -> first sample timestamp (nanoseconds)
-        self.first_address_time: dict[int, int] = {}
-        # Root function name -> first sample timestamp
-        self.func_timestamp: dict[str, int] = {}
 
         # Error/skip counters for diagnostics
         self.dwarf_lookup_failures = 0  # Addresses with no DWARF info
         self.missing_symbols = 0         # Frames with no symbol name
         self.incomplete_stacks = 0       # Incomplete inline stacks
+
+stats = Stats()
+
+class BinaryContext:
+    """Per-binary profiling context."""
+    def __init__(self, dsoname: str):
+        self.dsoname = dsoname
+        self.btstate: Any = None
+        # outermost function name -> profile tree root
+        self.tree: dict[str, FuncNode] = {}
+        # Range-based profile data (LBR-derived ranges)
+        self.range_counts: Counter[tuple[tuple[int, int], str | None]] = Counter()
+        # ((from_addr, to_addr), from_sym, to_sym) -> count
+        self.branch_counts: Counter[tuple[tuple[int, int], str | None, str | None]] = Counter()
+        # Timestamp tracking: first sample time per function
+        self.first_address_time: dict[int, int] = {}
+        # Root function name -> first sample timestamp
+        self.func_timestamp: dict[str, int] = {}
+        # Frame cache: addr -> frames | None
+        self.frame_cache: dict[int, list[Frame] | None] = {}
+        # Sample count for --min-samples filtering
+        self.sample_count = 0
 
     def root(self, name: str, source_file: str | None = None) -> "FuncNode":
         node = self.tree.get(name)
@@ -136,41 +151,46 @@ class Stats:
             node.source_file = source_file
         return node
 
-stats = Stats()
+    # TODO: add load_base to support shared library relocation. backtrace.pcinfo
+    # expects file-relative IPs; for shared libraries we need to subtract the
+    # runtime load offset before resolving addresses.
 
-# Frame cache: addr -> frames | None
-# Amortizes cost of repeated getframes() calls during range expansion
-_frame_cache: dict[int, list[Frame] | None] = {}
+# dsoname -> BinaryContext
+binaries: dict[str, BinaryContext] = {}
 
-def getframes_cached(ip: int) -> list[Frame] | None:
-    """Cached version of getframes for efficient range expansion."""
-    if ip not in _frame_cache:
-        _frame_cache[ip] = getframes(ip)
-    return _frame_cache[ip]
+def is_file_dso(dsoname: str) -> bool:
+    """Check if DSO is a real file (not kernel, vdso, etc.)."""
+    return not dsoname.startswith('[') and '/' in dsoname
 
-def clear_frame_cache():
-    """Clear the frame cache.
+def should_process_binary(dsoname: str) -> bool:
+    """Check if binary matches --binary patterns."""
+    if not args.binary:
+        return True
+    basename = os.path.basename(dsoname)
+    return any(fnmatch.fnmatch(dsoname, pat) or fnmatch.fnmatch(basename, pat)
+               for pat in args.binary)
 
-    Call this if:
-    - Processing multiple binaries in one run
-    - Binary file changes during execution
-    - Need to free memory after processing large profile
-    """
-    global _frame_cache
-    _frame_cache.clear()
+def get_or_create_binary(dsoname: str) -> BinaryContext | None:
+    """Get or create BinaryContext for a DSO."""
+    if dsoname in binaries:
+        return binaries[dsoname]
 
-def get_frame_cache_stats() -> dict[str, int]:
-    """Get frame cache statistics.
+    if not is_file_dso(dsoname):
+        return None
 
-    Returns:
-        dict with 'size' (number of entries) and 'memory' (estimated bytes)
-    """
-    return {
-        'size': len(_frame_cache),
-        # Rough estimate: each Frame ~48 bytes, plus overhead
-        'memory': sum(len(frames) * 48 if frames else 0
-                     for frames in _frame_cache.values())
-    }
+    if not should_process_binary(dsoname):
+        return None
+
+    try:
+        btstate = backtrace.createstate(dsoname)
+    except Exception as e:
+        print(f"warning: cannot create backtrace state for {dsoname}: {e}", file=sys.stderr)
+        return None
+
+    ctx = BinaryContext(dsoname)
+    ctx.btstate = btstate
+    binaries[dsoname] = ctx
+    return ctx
 
 class FuncNode:
     """A node in the profile tree.
@@ -263,11 +283,11 @@ def collect_strings(node: FuncNode, out: set[str]) -> None:
         collect_strings(child, out)
 
 def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
-               string_index: dict[str, int], toplevel: bool) -> None:
+               string_index: dict[str, int], toplevel: bool, ctx: BinaryContext) -> None:
     if toplevel:
         wcounter(f, node.head_count())
         if args.gcov_version >= 3:
-            ts = stats.func_timestamp.get(node.name, 0)
+            ts = ctx.func_timestamp.get(node.name, 0)
             wcounter(f, ts)  # first sample timestamp (nanoseconds)
         w32(f, string_index[node.name])
     else:
@@ -290,37 +310,29 @@ def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
             wcounter(f, tcount)
 
     for coff, _, child in children:
-        wfunc_node(f, child, coff, string_index, False)
+        wfunc_node(f, child, coff, string_index, False, ctx)
 
-def gen_strtable(stats: Stats):
+def gen_strtable(ctx: BinaryContext):
     strings: set[str] = set()
-    for node in stats.tree.values():
+    for node in ctx.tree.values():
         collect_strings(node, strings)
     # Index 0 must be empty (reserved by GCC)
     string_table = [""] + sorted(strings)
     string_index = { name: i for i, name in enumerate(string_table) }
     return string_table, string_index
 
-def gen_strtable_v3(stats: Stats):
-    """Generate string table for GCOV v3 format with file names.
-
-    Returns:
-        file_table: list[str] - sorted unique source filenames
-        file_index: dict[str, int] - filename → index mapping
-        func_file_map: dict[str, int] - function name → file index mapping
-        string_table: list[str] - sorted unique function/target names
-        string_index: dict[str, int] - string → index mapping
-    """
+def gen_strtable_v3(ctx: BinaryContext):
+    """Generate string table for GCOV v3 format with file names."""
     source_files: set[str] = set()
     function_names: set[str] = set()
     func_to_file: dict[str, str | None] = {}
 
     # Collect from tree roots
-    for name, node in stats.tree.items():
+    for name, node in ctx.tree.items():
         if node.source_file:
             source_files.add(node.source_file)
             func_to_file[name] = node.source_file
-        collect_strings_v3(node, function_names, source_files, func_to_file)
+        collect_strings_v3(ctx, node, function_names, source_files, func_to_file)
 
     # Build file table and index
     file_table = sorted(source_files)
@@ -340,27 +352,16 @@ def gen_strtable_v3(stats: Stats):
 
     return file_table, file_index, func_file_map, string_table, string_index
 
-def compute_summary(stats: Stats) -> dict:
-    """Compute profile summary statistics for GCOV_TAG_AFDO_SUMMARY.
-
-    Traverses the profile tree and computes aggregate statistics and
-    percentile-based histogram (detailed summaries) showing how execution
-    counts are distributed.
-
-    - Recursively traverse all nodes (including inlined children)
-    - Count only top-level functions in num_functions
-    - Use cumulative percentile histogram (persistent state across cutoffs)
-    """
+def compute_summary(ctx: BinaryContext) -> dict:
+    """Compute profile summary statistics for GCOV_TAG_AFDO_SUMMARY."""
     total_count = 0
     max_count = 0
     max_function_count = 0
     num_counts = 0
-    num_functions = len(stats.tree)  # Count only top-level functions
+    num_functions = len(ctx.tree)  # Count only top-level functions
     count_frequencies: dict[int, int] = {}  # {count: frequency}
 
     def traverse_node(node: FuncNode, is_root: bool = False) -> None:
-        """Recursively traverse a node and its inlined children.
-        """
         nonlocal total_count, max_count, max_function_count, num_counts
 
         # For root nodes, track function entry count (offset 0)
@@ -369,7 +370,6 @@ def compute_summary(stats: Stats) -> dict:
             max_function_count = max(max_function_count, func_head_count)
 
         # Collect all position counts from this node
-        # Filter out zero counts (structural positions with no execution)
         for offset, count in node.positions.items():
             if count > 0:
                 total_count += count
@@ -382,7 +382,7 @@ def compute_summary(stats: Stats) -> dict:
             traverse_node(child, is_root=False)
 
     # Traverse all top-level functions
-    for func_name, func_node in stats.tree.items():
+    for func_name, func_node in ctx.tree.items():
         traverse_node(func_node, is_root=True)
 
     # Compute detailed summaries (percentile histogram)
@@ -452,18 +452,9 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
         wcounter(f, ds['num_counts'])
 
 
-def collect_strings_v3(node: FuncNode, func_names: set[str], files: set[str],
+def collect_strings_v3(ctx: BinaryContext, node: FuncNode, func_names: set[str], files: set[str],
                        func_to_file: dict[str, str | None]) -> None:
-    """Recursively collect function names and source files for v3 format.
-
-    Traverses the function tree and collects:
-    - All function names (including inline children and call targets)
-    - All source filenames referenced by functions
-    - Mapping from function names to their source files
-
-    For call targets, attempts to resolve source files via stats.tree lookup.
-    If not found, marks as None (external function).
-    """
+    """Recursively collect function names and source files for v3 format."""
     func_names.add(node.name)
     if node.source_file:
         files.add(node.source_file)
@@ -477,82 +468,71 @@ def collect_strings_v3(node: FuncNode, func_names: set[str], files: set[str],
         for target_name in targets.keys():
             if target_name not in func_to_file:
                 # Try to find this function in the tree
-                if target_name in stats.tree and stats.tree[target_name].source_file:
-                    func_to_file[target_name] = stats.tree[target_name].source_file
+                if target_name in ctx.tree and ctx.tree[target_name].source_file:
+                    func_to_file[target_name] = ctx.tree[target_name].source_file
                 else:
                     func_to_file[target_name] = None  # No file info
 
     # Recurse into inline children
     for _, _, child in emitted_children(node):
-        collect_strings_v3(child, func_names, files, func_to_file)
+        collect_strings_v3(ctx, child, func_names, files, func_to_file)
 
 
-def expand_ranges() -> None:
-    """Expand range_counts into position counts in the profile tree.
+def expand_ranges(ctx: BinaryContext) -> None:
+    """Expand range_counts into position counts in the profile tree for one binary.
 
     1. For each range, add range count to EVERY valid address in the range
     2. Multiple addresses may map to the same source position (different discriminators)
     3. For each source position, take the MAXIMUM count from all addresses that map to it."""
 
-    print(f"Expanding {len(stats.range_counts)} ranges into source positions...")
+    vprint(f"Expanding {len(ctx.range_counts)} ranges for {os.path.basename(ctx.dsoname)}...")
 
     if args.verbose:
         print("\nRange counts:")
-        for (begin, end), sym in stats.range_counts.keys():
-            count = stats.range_counts[((begin, end), sym)]
+        for (begin, end), sym in ctx.range_counts.keys():
+            count = ctx.range_counts[((begin, end), sym)]
             print(f"  [{begin:x}-{end:x}] ({sym}): count={count}")
 
-    # Count of valid address probes (addresses that yielded DWARF info)
-    # Note: this is total probes, not unique addresses (an address can be probed by multiple ranges)
     valid_address_probes = 0
     skipped_ranges = 0
+    dwarf_failures = 0
+    missing_syms = 0
+    incomplete = 0
 
-    # First, build address_count_map by iterating all ranges
-    # Multiple ranges can contribute to the same address (they accumulate)
-    # Also track the symbol name from perf for each address
     address_counts: dict[int, int] = defaultdict(int)
     address_symbols: dict[int, str | None] = {}
 
-    for ((begin, end), range_sym), range_count in stats.range_counts.items():
+    for ((begin, end), range_sym), range_count in ctx.range_counts.items():
         range_has_data = False
         for addr in range(begin, end + 1):
-            frames = getframes_cached(addr)
+            frames = getframes(ctx, addr)
             if frames is None:
                 continue
 
             range_has_data = True
             valid_address_probes += 1
 
-            # Add range count to this address
             address_counts[addr] += range_count
-            # Store symbol name from perf (prefer first seen, but any is fine for same address)
             if addr not in address_symbols:
                 address_symbols[addr] = range_sym
 
         if not range_has_data:
             skipped_ranges += 1
 
-    # Now process each address and map to source positions
-    # For each unique (root, path, offset), take MAX count from all addresses mapping to it
-    # Also track source files for root and inline frames
     position_max_counts: dict[tuple[str, tuple[tuple[str, int], ...], int], int] = {}
     position_source_files: dict[tuple[str, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
 
     for addr, addr_count in address_counts.items():
-        frames = getframes_cached(addr)
+        frames = getframes(ctx, addr)
         if frames is None:
-            stats.dwarf_lookup_failures += 1
+            dwarf_failures += 1
             continue
 
-        # Build inline call path
         root_frame = frames[0]
         if not root_frame.sym:
-            stats.missing_symbols += 1
+            missing_syms += 1
             continue
 
-        # Use symbol name from perf if available (includes .lto_priv.N suffixes).
-        # This is more accurate than DWARF names for LTO-optimized code.
-        # Fall back to DWARF symbol name if perf didn't provide one.
         perf_sym = address_symbols.get(addr)
         if perf_sym and root_frame.sym in perf_sym:
             root_name = perf_sym
@@ -560,10 +540,9 @@ def expand_ranges() -> None:
             root_name = root_frame.sym
         root_source_file = os.path.basename(root_frame.file) if root_frame.file else None
 
-        # Propagate first sample timestamp to root function
-        addr_time = stats.first_address_time.get(addr)
-        if addr_time and root_name not in stats.func_timestamp:
-            stats.func_timestamp[root_name] = addr_time
+        addr_time = ctx.first_address_time.get(addr)
+        if addr_time and root_name not in ctx.func_timestamp:
+            ctx.func_timestamp[root_name] = addr_time
 
         names: list[str] = [root_name]
         source_files: list[str | None] = [root_source_file]
@@ -574,7 +553,7 @@ def expand_ranges() -> None:
             source_files.append(os.path.basename(fr.file) if fr.file else None)
 
         if len(names) != len(frames):
-            stats.incomplete_stacks += 1
+            incomplete += 1
             continue
 
         path: list[tuple[str, int]] = []
@@ -585,25 +564,18 @@ def expand_ranges() -> None:
         path_tuple = tuple(path)
         pos_key = (root_name, path_tuple, leaf_off)
 
-        # Take MAX count for this position (not sum!)
         if pos_key not in position_max_counts or addr_count > position_max_counts[pos_key]:
             position_max_counts[pos_key] = addr_count
-            # Store source files: (root_source, [inline source files])
             position_source_files[pos_key] = (root_source_file, source_files[1:])
 
-    # Add positions to profile tree
     for pos_key, count in position_max_counts.items():
         root_name, path_tuple, leaf_off = pos_key
         path = list(path_tuple)
         root_source_file, inline_source_files = position_source_files[pos_key]
-        root = stats.root(root_name, root_source_file)
+        root = ctx.root(root_name, root_source_file)
 
-        # If this is an inline context, also add count to root function's position
-        # at the first inline call site.
         if len(path) > 0:
-            # path[0] is (inlined_function_name, call_offset_in_root)
             root_call_offset = path[0][1]
-            # Use MAX (not +=) to match our position aggregation strategy
             if root_call_offset in root.positions:
                 root.positions[root_call_offset] = max(
                     root.positions[root_call_offset], count
@@ -613,47 +585,31 @@ def expand_ranges() -> None:
 
         add_path(root, path, leaf_off, count, None, inline_source_files)
 
-    #print(f"Probed {valid_address_probes} addresses from {len(stats.range_counts) - skipped_ranges} ranges")
-    #print(f"Skipped {skipped_ranges} ranges with no debug info")
-    #print(f"Frame cache size: {len(_frame_cache)}")
-
-    # Report diagnostics if any errors occurred
-    if stats.dwarf_lookup_failures > 0:
-        print(f"Note: {stats.dwarf_lookup_failures} addresses had no DWARF info")
-    if stats.missing_symbols > 0:
-        print(f"Note: {stats.missing_symbols} frames had no symbol names")
-    if stats.incomplete_stacks > 0:
-        print(f"Note: {stats.incomplete_stacks} inline stacks were incomplete")
+    stats.dwarf_lookup_failures += dwarf_failures
+    stats.missing_symbols += missing_syms
+    stats.incomplete_stacks += incomplete
 
 
-def add_branch_targets() -> None:
-    """Add call targets from branch_counts to the profile tree.
+def add_branch_targets(ctx: BinaryContext) -> None:
+    """Add call targets from branch_counts to the profile tree for one binary."""
 
-    For each branch (from, to), resolve both addresses and add the target
-    at the source position if it's a call."""
-
-    print(f"Adding call targets from {len(stats.branch_counts)} branches...")
+    vprint(f"Adding call targets from {len(ctx.branch_counts)} branches for {os.path.basename(ctx.dsoname)}...")
     added_targets = 0
 
-    for ((from_addr, to_addr), from_sym, to_sym), count in stats.branch_counts.items():
-        sframes = getframes_cached(from_addr)
-        dframes = getframes_cached(to_addr)
+    for ((from_addr, to_addr), from_sym, to_sym), count in ctx.branch_counts.items():
+        sframes = getframes(ctx, from_addr)
+        dframes = getframes(ctx, to_addr)
 
         if sframes is None or dframes is None:
             continue
 
-        # Determine if this is a call (different root functions)
-        # Compare root (outermost) frames, not innermost frames.
-        # Innermost frames differ for any inline context change, but that's not a call.
         sroot = sframes[0]
         droot = dframes[0]
         is_call = sroot.sym != droot.sym
 
         if not is_call:
-            continue  # Not a call, skip
+            continue
 
-        # Get root names from perf symbols (includes .lto_priv.N)
-        # Fall back to DWARF names if perf didn't provide symbols
         if from_sym and sroot.sym and sroot.sym in from_sym:
             sroot_name: str = from_sym
         elif sroot.sym:
@@ -661,7 +617,6 @@ def add_branch_targets() -> None:
         else:
             continue
 
-        # For target name, prefer perf symbol, fall back to DWARF
         if to_sym and droot.sym and droot.sym in to_sym:
             droot_name = to_sym
         elif droot.sym:
@@ -669,11 +624,9 @@ def add_branch_targets() -> None:
         else:
             continue
 
-        # Extract source files
         sroot_source_file = os.path.basename(sroot.file) if sroot.file else None
 
-        # Build source inline path with source files
-        root = stats.root(sroot_name, sroot_source_file)
+        root = ctx.root(sroot_name, sroot_source_file)
         names: list[str] = [sroot_name]
         source_files: list[str | None] = []
         for fr in sframes[1:]:
@@ -689,21 +642,15 @@ def add_branch_targets() -> None:
         for i in range(1, len(sframes)):
             path.append((names[i], frame_offset(sframes[i - 1])))
 
-        # Record timestamp for target function if not already set
-        if droot_name and droot_name not in stats.func_timestamp:
-            branch_time = stats.first_address_time.get(from_addr)
+        if droot_name and droot_name not in ctx.func_timestamp:
+            branch_time = ctx.first_address_time.get(from_addr)
             if branch_time:
-                stats.func_timestamp[droot_name] = branch_time
+                ctx.func_timestamp[droot_name] = branch_time
 
-        # Determine target name - use the symbol we already resolved above
-        # (either from perf or DWARF). If for some reason it's not set,
-        # fall back to innermost DWARF frame.
         if not droot_name:
             continue
         target = droot_name
 
-        # Add target at source position. Materialize a zero-count position only
-        # when it is needed to carry a qualifying target histogram.
         leaf_off = frame_offset(sframes[-1])
         node = root
         for i, (name, off) in enumerate(path):
@@ -713,16 +660,14 @@ def add_branch_targets() -> None:
         node.targets[leaf_off][target] += count
         added_targets += 1
 
-    print(f"Added {added_targets} call targets")
+    vprint(f"Added {added_targets} call targets")
 
-def add_dwarf_zero_scaffolding():
-    """Add zero-count positions at function boundaries based on DWARF observations.
-
-    Add function epilogue (line after max observed line)."""
+def add_dwarf_zero_scaffolding(ctx: BinaryContext) -> None:
+    """Add zero-count positions at function boundaries for one binary."""
 
     added_zeros = 0
 
-    for name, node in stats.tree.items():
+    for name, node in ctx.tree.items():
         if not node.positions:
             continue
 
@@ -762,52 +707,34 @@ def add_dwarf_zero_scaffolding():
             node.structural_zeros.add(epilogue_offset)
             added_zeros += 1
 
-    print(f"Added {added_zeros} DWARF-informed zero scaffolding positions")
+    vprint(f"Added {added_zeros} DWARF-informed zero scaffolding positions")
 
-def trace_end():
-    print("%d raw branches, %d filtered, %d errored, %d crossed" %
-          (stats.raw_total_branches, stats.raw_ignored_branches, stats.errored, stats.crossed))
-    print(f"Collected {len(stats.range_counts)} ranges and {len(stats.branch_counts)} branches")
+def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
+    """Write gcov profile file for a specific binary. Returns True if written."""
 
-    # Expand ranges into position counts (main attribution step)
-    expand_ranges()
+    if not ctx.tree:
+        if args.write_empty:
+            print(f"Warning: writing empty file to {output_path}")
+        else:
+            print(f"Skipping {output_path} (no profile data)")
+            return False
 
-    # Add call targets from branch data
-    add_branch_targets()
+    update_branch_counts(ctx)
 
-    # Add DWARF-informed zero scaffolding for function boundaries
-    add_dwarf_zero_scaffolding()
-
-    suffix.elide_tree_suffixes(stats.tree, args.suffix_elision)
-
-    if args.top > 0:
-        entries: list[tuple[str, int]] = []
-        for name, node in stats.tree.items():
-            collect_top(entries, name, node)
-        for path, count in sorted(entries, key=lambda x: x[1], reverse=True)[:args.top]:
-            print(path, "\t", count, "%.2f" % (float(count) / stats.raw_total_branches * 100. if stats.raw_total_branches else 0.0))
-
-    # XXX multiple output files
-    update_branch_counts(stats)
-
-    gcov_output = args.gcov if args.gcov else args.output
-    with open(gcov_output, "wb") as f:
+    with open(output_path, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
-        w32(f, args.gcov_version)  # Write actual version from args
+        w32(f, args.gcov_version)
         w32(f, 0)
 
-        # Write summary section (v3 only)
         if args.gcov_version == 3:
-            summary = compute_summary(stats)
+            summary = compute_summary(ctx)
             write_summary(f, summary)
-            print(f"Summary: {summary['num_functions']} functions, {summary['num_counts']} counts, total={summary['total_count']}")
+            vprint(f"Summary: {summary['num_functions']} functions, {summary['num_counts']} counts, total={summary['total_count']}")
 
-        # Write string table (version-specific)
         w32(f, GCOV_TAG_AFDO_FILE_NAMES)
 
         if args.gcov_version == 2:
-            # Version 2: simple string list
-            string_table, string_index = gen_strtable(stats)
+            string_table, string_index = gen_strtable(ctx)
             length = 4 + sum((len(s) + 5) for s in string_table)
             w32(f, length)
             w32(f, len(string_table))
@@ -815,64 +742,120 @@ def trace_end():
                 wstring(f, fn)
 
         elif args.gcov_version == 3:
-            # Version 3: files + functions with indices
-            file_table, file_index, func_file_map, string_table, string_index = gen_strtable_v3(stats)
+            file_table, file_index, func_file_map, string_table, string_index = gen_strtable_v3(ctx)
 
-            # Calculate length
-            length = 4  # num_filenames
+            length = 4
             length += sum(len(fname) + 5 for fname in file_table)
-            length += 4  # num_functions
+            length += 4
             length += sum(len(func) + 5 + 4 for func in string_table)
 
             w32(f, length)
 
-            # Write file names
             w32(f, len(file_table))
             for fname in file_table:
                 wstring(f, fname)
 
-            # Write function names with file indices
             w32(f, len(string_table))
             for func_name in string_table:
                 wstring(f, func_name)
                 file_idx = func_file_map.get(func_name, -1)
-                w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)  # -1 as unsigned
+                w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)
 
-        # write function profile
         w32(f, GCOV_TAG_AFDO_FUNCTION)
         lenoff = f.tell()
-        w32(f, 0) # length. ignored by gcc
-        print("Writing %d functions" % len(stats.tree))
-        w32(f, len(stats.tree))
-        for name in sorted(stats.tree):
-            wfunc_node(f, stats.tree[name], 0, string_index, True)
+        w32(f, 0)
+        vprint("Writing %d functions to %s" % (len(ctx.tree), output_path))
+        w32(f, len(ctx.tree))
+        for name in sorted(ctx.tree):
+            wfunc_node(f, ctx.tree[name], 0, string_index, True, ctx)
 
         if not pathlib.Path(f.name).is_fifo():
             endoff = f.tell()
             f.seek(lenoff, 0)
-            print("Data length %d" % (endoff - lenoff))
+            vprint("Data length %d" % (endoff - lenoff))
             w32(f, endoff - lenoff)
             f.seek(endoff, 0)
 
         write_gcov_tail(f)
 
-    print("%d processed branches, %d output branches, %.2f%% ignored" %
-          (stats.output_total_positions,
-           stats.output_branches,
-           (float(stats.output_ignored_positions) / stats.output_total_positions * 100.
-            if stats.output_total_positions else 0.0)))
+    print(f"Wrote {output_path}")
+    return True
 
-def collect_top(entries: list[tuple[str, int]], prefix: str, node: FuncNode) -> None:
-    for off, count in node.positions.items():
-        entries.append(("%s:%d" % (prefix, off), count))
-    for (coff, cname), child in node.children.items():
-        collect_top(entries, "%s/%s@%d" % (prefix, cname, coff), child)
+def trace_end():
+    vprint("%d raw branches, %d filtered, %d errored, %d crossed" %
+          (stats.raw_total_branches, stats.raw_ignored_branches, stats.errored, stats.crossed))
 
-def update_branch_counts(stats: Stats) -> None:
-    stats.output_total_positions = 0
-    stats.output_ignored_positions = 0
-    stats.output_branches = 0
-    for node in stats.tree.values():
+    # Filter binaries by --min-samples
+    active_binaries = {dsoname: ctx for dsoname, ctx in binaries.items()
+                       if ctx.sample_count >= args.min_samples}
+
+    if len(active_binaries) == 0:
+        print("No binaries with sufficient samples", file=sys.stderr)
+        return
+
+    # Process each binary
+    for dsoname, ctx in active_binaries.items():
+        basename = os.path.basename(dsoname)
+        vprint(f"\nProcessing {basename} ({ctx.sample_count} samples)...")
+
+        expand_ranges(ctx)
+        add_branch_targets(ctx)
+        add_dwarf_zero_scaffolding(ctx)
+        suffix.elide_tree_suffixes(ctx.tree, args.suffix_elision)
+
+    # Determine output filenames
+    output_paths: dict[str, str] = {}
+    if len(active_binaries) == 1:
+        dsoname = list(active_binaries.keys())[0]
+        output_paths[dsoname] = args.gcov if args.gcov else args.output
+    else:
+        if args.gcov:
+            print("warning: --gcov ignored in multi-binary mode", file=sys.stderr)
+        used_paths: set[str] = set()
+        for dsoname in active_binaries:
+            basename = os.path.basename(dsoname)
+            if args.output_dir:
+                os.makedirs(args.output_dir, exist_ok=True)
+                path = os.path.join(args.output_dir, f"{basename}.gcov")
+            else:
+                path = f"{basename}.gcov"
+
+            if path in used_paths:
+                print(f"warning: output conflict for {dsoname}, skipping", file=sys.stderr)
+                # TODO: use buildid for conflict resolution
+                continue
+
+            used_paths.add(path)
+            output_paths[dsoname] = path
+
+    # Write output files
+    written: list[str] = []
+    for dsoname, ctx in active_binaries.items():
+        if dsoname not in output_paths:
+            continue
+        if write_gcov_file(ctx, output_paths[dsoname]):
+            written.append(dsoname)
+
+    # Print final summary
+    vprint(f"\nWrote {len(written)} profile files:")
+    for dsoname in written:
+        vprint(f"  {os.path.basename(dsoname)}")
+
+    if stats.dwarf_lookup_failures > 0:
+        vprint(f"Note: {stats.dwarf_lookup_failures} addresses had no DWARF info")
+    if stats.missing_symbols > 0:
+        vprint(f"Note: {stats.missing_symbols} frames had no symbol names")
+    if stats.incomplete_stacks > 0:
+        vprint(f"Note: {stats.incomplete_stacks} inline stacks were incomplete")
+
+    vprint("%d processed branches, %d output branches, %.2f%% ignored" %
+           (stats.output_total_positions,
+            stats.output_branches,
+            (float(stats.output_ignored_positions) / stats.output_total_positions * 100.
+             if stats.output_total_positions else 0.0)))
+
+def update_branch_counts(ctx: BinaryContext) -> None:
+    for node in ctx.tree.values():
         update_node_branch_counts(node)
 
 def update_node_branch_counts(node: FuncNode) -> None:
@@ -888,10 +871,15 @@ def update_node_branch_counts(node: FuncNode) -> None:
 # Return the inline/frame stack for IP as a list of Frame, ordered from the
 # outermost (real, symbol-table) function down to the innermost inlined
 # frame. Returns None if the address cannot be resolved.
-def getframes(ip:int) -> list[Frame] | None:
-    p = backtrace.pcinfo(btstate, ip)
+def getframes(ctx: BinaryContext, ip: int) -> list[Frame] | None:
+    """Cached lookup of inline call stack for address in a specific binary."""
+    if ip in ctx.frame_cache:
+        return ctx.frame_cache[ip]
+
+    p = backtrace.pcinfo(ctx.btstate, ip)
     #print("pcinfo %x" % ip, p)
     if p is None or len(p) == 0:
+        ctx.frame_cache[ip] = None
         return None
     op = p[0]
     # pcinfo entry layout: (PC, filename, lineno, function, disc, decl_line)
@@ -899,8 +887,10 @@ def getframes(ip:int) -> list[Frame] | None:
     frames = [Frame(x[1], x[2], x[4], x[3], x[5])
               for x in itertools.takewhile(lambda x: x[0] == op[0], p)]
     if frames[0].file is None:
+        ctx.frame_cache[ip] = None
         return None
     frames.reverse()
+    ctx.frame_cache[ip] = frames
     return frames
 
 def frame_offset(fr: Frame) -> int:
@@ -931,8 +921,8 @@ def frame_offset(fr: Frame) -> int:
 def process_event(param_dict):
     """Process LBR branch stack to build range_counts and branch_counts.
 
-    Implements LBR range reconstruction: for adjacent LBR entries,
-    range [entry[i].to, entry[i-1].from) represents executed code."""
+    Routes branches to the correct per-binary context. Cross-binary
+    branches are filtered out."""
 
     brstack = param_dict["brstack"]
     brstacksym = param_dict["brstacksym"]
@@ -940,8 +930,8 @@ def process_event(param_dict):
     if len(brstack) == 0:
         return
 
-    # Filter to branches within our target binary
-    focused_branches = []
+    # Route each branch to its binary context
+    focused_by_binary: dict[str, list[tuple[BinaryContext, dict, dict]]] = {}
     for br, bsym in zip(brstack, brstacksym):
         stats.total += 1
         stats.raw_total_branches += 1
@@ -949,61 +939,57 @@ def process_event(param_dict):
             stats.crossed += 1
             stats.raw_ignored_branches += 1
             continue
-        if os.path.basename(br["from_dsoname"]) != os.path.basename(args.binary):
+
+        ctx = get_or_create_binary(br["from_dsoname"])
+        if ctx is None:
             stats.ignored += 1
             stats.raw_ignored_branches += 1
             continue
-        focused_branches.append((br, bsym))
 
-    # Implement duplicate-top-entry filtering (backedge detection heuristic)
-    if (len(focused_branches) >= 2 and
-        focused_branches[0][0]["from"] == focused_branches[1][0]["from"] and
-        focused_branches[0][0]["to"] == focused_branches[1][0]["to"]):
-        # Entries 0 and 1 are duplicates
-        br0_from = focused_branches[0][0]["from"]
-        br0_to = focused_branches[0][0]["to"]
-        stride = abs(br0_from - br0_to)
-        if stride > args.strip_dup_backedge_stride_limit:
-            # Skip the duplicate top entry
-            focused_branches = focused_branches[1:]
+        ctx.sample_count += 1
+        focused_by_binary.setdefault(ctx.dsoname, []).append((ctx, br, bsym))
 
-    if len(focused_branches) == 0:
-        return
-
-    # Track first sample timestamp per address (like autofdo)
     sample_time = param_dict.get("sample", {}).get("time", 0)
-    if sample_time:
-        for br, _ in focused_branches:
-            stats.first_address_time.setdefault(br["from"], sample_time)
-            stats.first_address_time.setdefault(br["to"], sample_time)
 
-    # Store branch counts with symbols from perf
-    for br, bsym in focused_branches:
-        from_sym = bsym.get("from", "").split("+")[0] if "+" in bsym.get("from", "") else None
-        to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
-        stats.branch_counts[((br["from"], br["to"]), from_sym, to_sym)] += 1
+    for dsoname, branches in focused_by_binary.items():
+        ctx = binaries[dsoname]
 
-    if len(focused_branches) < 2:
-        # Need at least 2 entries to form a range, but still keep branch samples.
-        return
+        # Duplicate-top-entry filtering per binary
+        if (len(branches) >= 2 and
+            branches[0][1]["from"] == branches[1][1]["from"] and
+            branches[0][1]["to"] == branches[1][1]["to"]):
+            br0_from = branches[0][1]["from"]
+            br0_to = branches[0][1]["to"]
+            if abs(br0_from - br0_to) > args.strip_dup_backedge_stride_limit:
+                branches = branches[1:]
 
-    # Build range_counts from adjacent LBR entries
-    # LBR ordering: entries are from most recent (index 0) to oldest
-    # Range construction: current.to → previous.from represents execution
-
-    for i in range(1, len(focused_branches)):
-        br, bsym = focused_branches[i]
-        prev_br, prev_bsym = focused_branches[i - 1]
-
-        begin = br["to"]
-        end = prev_br["from"]
-
-        # Validate range
-        if end < begin:
-            continue
-        if end - begin > args.insn_range_max:
+        if len(branches) == 0:
             continue
 
-        # Extract symbol name from the begin address (br["to"])
-        to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
-        stats.range_counts[((begin, end), to_sym)] += 1
+        if sample_time:
+            for _, br, _ in branches:
+                ctx.first_address_time.setdefault(br["from"], sample_time)
+                ctx.first_address_time.setdefault(br["to"], sample_time)
+
+        for _, br, bsym in branches:
+            from_sym = bsym.get("from", "").split("+")[0] if "+" in bsym.get("from", "") else None
+            to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
+            ctx.branch_counts[((br["from"], br["to"]), from_sym, to_sym)] += 1
+
+        if len(branches) < 2:
+            continue
+
+        for i in range(1, len(branches)):
+            _, br, bsym = branches[i]
+            _, prev_br, _ = branches[i - 1]
+
+            begin = br["to"]
+            end = prev_br["from"]
+
+            if end < begin:
+                continue
+            if end - begin > args.insn_range_max:
+                continue
+
+            to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
+            ctx.range_counts[((begin, end), to_sym)] += 1
