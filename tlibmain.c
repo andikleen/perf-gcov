@@ -1,6 +1,5 @@
 /*
  * Main program that links against tlib for multi-binary gcov tests
- * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include <stdio.h>

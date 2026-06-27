@@ -1,6 +1,5 @@
 /*
  * Shared library for multi-binary gcov tests
- * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 int tlib_compute(int n)

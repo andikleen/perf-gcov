@@ -1,6 +1,5 @@
 /*
  * Standalone test binary 1 for multi-binary gcov tests
- * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 static volatile int a1 = 10000, b1 = 100000, c1;
