@@ -13,6 +13,7 @@
 # open:
 # check buildid?
 # better way to handle PIE binaries. fix libbacktrace?
+# better algorithm for range probing.
 
 import os
 import sys
