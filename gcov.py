@@ -469,25 +469,6 @@ def compute_summary(ctx: BinaryContext) -> dict:
         'detailed_summaries': detailed_summaries
     }
 
-def write_summary(f: BinaryIO, summary: dict) -> None:
-    """Write GCOV_TAG_AFDO_SUMMARY section.
-
-    Writes the profile summary statistics in GCOV v3 format.
-    Note: Unlike other sections, SUMMARY has no length field - the tag is
-    followed directly by the data fields.
-    """
-    w32(f, GCOV_TAG_AFDO_SUMMARY)
-    wcounter(f, summary['total_count'])
-    wcounter(f, summary['max_count'])
-    wcounter(f, summary['max_function_count'])
-    wcounter(f, summary['num_counts'])
-    wcounter(f, summary['num_functions'])
-    wcounter(f, len(summary['detailed_summaries']))
-
-    for ds in summary['detailed_summaries']:
-        w32(f, ds['cutoff'])
-        wcounter(f, ds['min_count'])
-        wcounter(f, ds['num_counts'])
 
 def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
                        func_to_file: dict[FuncKey, str | None]) -> None:

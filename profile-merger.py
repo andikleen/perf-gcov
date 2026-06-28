@@ -412,19 +412,6 @@ def compute_summary(tree: dict[FuncKey, FuncNode]) -> dict:
         'detailed_summaries': detailed_summaries,
     }
 
-def write_summary(f: BinaryIO, summary: dict) -> None:
-    w32(f, GCOV_TAG_AFDO_SUMMARY)
-    wcounter(f, summary['total_count'])
-    wcounter(f, summary['max_count'])
-    wcounter(f, summary['max_function_count'])
-    wcounter(f, summary['num_counts'])
-    wcounter(f, summary['num_functions'])
-    wcounter(f, len(summary['detailed_summaries']))
-
-    for ds in summary['detailed_summaries']:
-        w32(f, ds['cutoff'])
-        wcounter(f, ds['min_count'])
-        wcounter(f, ds['num_counts'])
 
 def write_profile(path: str, tree: dict[FuncKey, FuncNode],
                   gcov_version: int, threshold: int,

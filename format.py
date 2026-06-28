@@ -69,6 +69,26 @@ def read_summary_raw(f: BinaryIO) -> bytes:
     detail = f.read(num * 20) if num else b""
     return header + detail
 
+def write_summary(f: BinaryIO, summary: dict) -> None:
+    """Write GCOV_TAG_AFDO_SUMMARY section.
+
+    Writes the profile summary statistics in GCOV v3 format.
+    Note: Unlike other sections, SUMMARY has no length field — the tag is
+    followed directly by the data fields.
+    """
+    w32(f, GCOV_TAG_AFDO_SUMMARY)
+    wcounter(f, summary['total_count'])
+    wcounter(f, summary['max_count'])
+    wcounter(f, summary['max_function_count'])
+    wcounter(f, summary['num_counts'])
+    wcounter(f, summary['num_functions'])
+    wcounter(f, len(summary['detailed_summaries']))
+
+    for ds in summary['detailed_summaries']:
+        w32(f, ds['cutoff'])
+        wcounter(f, ds['min_count'])
+        wcounter(f, ds['num_counts'])
+
 def expect(what: str, val: int, exp: int) -> None:
     if val != exp:
         sys.exit("for %s expect %x got val %x" % (what, exp, val))
