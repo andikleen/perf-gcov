@@ -3,11 +3,14 @@
 perf based replacement for autofdo to generate profile feedback data for gcc's
 [-fauto-profile](https://gcc.gnu.org/onlinedocs/gcc-16.1.0/gcc/Optimize-Options.html#index-fauto-profile) option.
 
-It reads LBR data from perf.data files collected with perf record -b and generates
-a autofdo gcov file for gcc.
+It reads LBR data from perf.data files collected with perf record -b and
+generates a autofdo gcov file for gcc.
 
-This is implemented in python as a perf script using the python interpreter linked into
-the Linux perf tool.
+This is implemented in python as a perf script using the python interpreter
+linked into the Linux perf tool.
+
+The goals are to be simpler, use less resources and support new usage models
+like online profiling.
 
 ## Setup
 
@@ -42,14 +45,27 @@ without installation.
 
 ## Synopsis
 
+Profiling currently requires an Intel system with LBR support.
+
+Check if LBRs are available:
 ```
-gcc -O2 -o workload ...
+grep . /sys/devices/cpu*/caps/branch_counter_nr
+```
+
+The program must be compiled with -O2+ and debug information (-g).
+
+```
+gcc -g -O2 -o workload ...
+# can also use gcc-auto-profile if installed
 perf record -b -c 100003 -e branches:upp workload
 gcov.py --binary workload file.gcov
 gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 ```
 
-or
+The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov
+and can be used as a replacement in existing build systems.
+
+Or to avoid temporary files:
 
 ```
 gcc -O2 -o workload ...
@@ -57,16 +73,13 @@ gcov-stream-profile.sh workload
 gcc -fauto-profile=workload.gcov -o workload.opt -O2 ...
 ```
 
-The streaming variant does not write the temporary sample data to disk.
+or to do online profiling of all running programs
 
-or 
 ```
 gcov-online-profile.sh --output-dir gcovdir
 ```
 
 The default output is gcov-version 3 for gcc 16+. If you use gcc 15 or older add --gcov-version 2
-
-The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so can be used as a replacement.
 
 ## Tools
 
@@ -74,7 +87,7 @@ The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so
 - profile-merger.py - merge multiple gcov files together
 - dump-gcov.py - dump a autofdo gcov file
 - gcov-stream-profile.sh - script to profile and generate gcov without temporary files
-- gcov-online-profile.sh - background gcov generation for all running binaris with debuginfo.
+- gcov-online-profile.sh - background gcov generation for all running binaries with debuginfo.
 
 ## Differences to autofdo
 
@@ -89,7 +102,9 @@ The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov, so
 ## Credits
 
 Andi Kleen with some AI help. Original concept and some algorithms
-inspired by [autofdo](https://github.com/google/autofdo)
+inspired by [autofdo](https://github.com/google/autofdo). The dwarf
+parsing is relying on Ian Lance Taylor's
+[libbacktrace](https://github.com/ianlancetaylor/libbacktrace).
 
 ## License
 
