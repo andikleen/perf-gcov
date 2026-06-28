@@ -2,8 +2,10 @@
 
 perf based replacement for autofdo to generate profile feedback data for gcc's
 [-fauto-profile](https://gcc.gnu.org/onlinedocs/gcc-16.1.0/gcc/Optimize-Options.html#index-fauto-profile) option.
+This often allows improving the performance of compiled code using profiling
+data taken from production binaries.
 
-It reads LBR data from perf.data files collected with perf record -b and
+It reads LBR (Last Branch Record) data from perf.data files collected with perf record -b and
 generates a autofdo gcov file for gcc.
 
 This is implemented in python as a perf script using the python interpreter
@@ -45,7 +47,10 @@ without installation.
 
 ## Synopsis
 
-Profiling currently requires an Intel system with LBR support.
+Profiling currently requires an Intel system with LBR support. This usually
+(but not always) means a non virtualized system, unless the hypervisor
+is set up to pass through LBR.  If running an old kernel
+kernel with a newer CPU it may also require updating the kernel.
 
 Check if LBRs are available:
 ```
@@ -98,6 +103,7 @@ The default output is gcov-version 3 for gcc 16+. If you use gcc 15 or older add
 - Supports streaming mode to not save individual samples to disk.
 - Supports online mode for automatic background profiling
 - Some differences in output due to differences in dwarf processing
+- Currently only supports Intel+LBR, other environments TBD.
 
 ## Credits
 
