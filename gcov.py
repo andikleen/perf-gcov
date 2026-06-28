@@ -46,6 +46,7 @@ ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], de
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
 ap.add_argument('--insn-range-max', type=int, default=1 << 20, help="Max range between branches to probe")
+ap.add_argument('--insn-range-stride', type=int, default=1, help="Stride to probe for")
 ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
                 help="Symbol suffix elision policy (default: %(default)s)")
 ap.add_argument('--min-samples', type=int, default=100,
@@ -520,7 +521,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
     for ((begin, end), range_sym), range_count in ctx.range_counts.items():
         range_has_data = False
-        for addr in range(begin, end + 1):
+        for addr in range(begin, end + 1, args.insn_range_stride):
             frames = getframes(ctx, addr)
             if frames is None:
                 continue
