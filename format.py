@@ -25,7 +25,7 @@ def w32(f: BinaryIO, v: int) -> None:
     try:
         f.write(struct.pack("I", v))
     except struct.error:
-        sys.exit("bad value for w32 %x" % v)
+        raise ValueError("bad value for w32 %x" % v)
 
 def wstring(f: BinaryIO, s: str) -> None:
     s += "\0"
@@ -92,10 +92,6 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
 def expect(what: str, val: int, exp: int) -> None:
     if val != exp:
         sys.exit("for %s expect %x got val %x" % (what, exp, val))
-
-def warn_expect(what: str, val: int, exp: int) -> None:
-    if val != exp:
-        print("for %s expect %x got val %x" % (what, exp, val))
 
 def check_counter(count: int, max_count: int | None = None) -> None:
     if max_count and count > max_count:

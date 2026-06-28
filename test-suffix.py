@@ -12,6 +12,7 @@ class FakeNode:
         self.positions: Counter[int] = Counter()
         self.targets: dict[int, Counter[tuple[str, str | None]]] = defaultdict(Counter)
         self.children: dict[tuple[int, str, str | None], "FakeNode"] = {}
+        self.structural_zeros: set[int] = set()
 def add_child(parent: FakeNode, offset: int, child: FakeNode) -> None:
     parent.children[(offset, child.name, None)] = child
 def add_target(node: FakeNode, offset: int, target: tuple[str, str | None], count: int) -> None:
