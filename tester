@@ -82,7 +82,7 @@ echo "=== Testing gcov-stream-profile.sh (v3) ==="
 echo "v3 stream pipeline dump:"
 ./gcov-dump.py ${i}.stream.gcov3
 
-if check_gcc_v3_support ; then
+if [ $GCC_GCOV_VERSION = 3 ] ; then
 	echo "GCC 16+ detected, testing v3 stream profile with -fauto-profile"
 	$CC -g -O2 -fauto-profile=${i}.stream.gcov3 ${i}.c -o ${i}.stream.opt3
 	./${i}.stream.opt3
