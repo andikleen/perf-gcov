@@ -14,7 +14,8 @@ class FuncNode:
     """A node in the profile tree, matching GCOV_TAG_AFDO_FUNCTION layout."""
 
     __slots__ = ("name", "source_file", "positions", "targets",
-                 "children", "head_count", "total_count", "timestamp")
+                 "children", "head_count", "total_count", "timestamp",
+                 "structural_zeros")
 
     def __init__(self, name: str, source_file: str | None = None,
                  head_count: int = 0, timestamp: int = 0):
@@ -25,6 +26,7 @@ class FuncNode:
         self.children: dict[tuple[int, str, str | None], "FuncNode"] = {}
         self.head_count = head_count
         self.total_count = 0
+        self.structural_zeros: set[int] = set()
         self.timestamp = timestamp
 
     def child(self, offset: int, name: str,
@@ -52,8 +54,8 @@ def _skip_section(f: BinaryIO) -> None:
     if length > 0:
         f.read(length)
 
-def read_profile(path: str) -> tuple[dict[FuncKey, FuncNode], int]:
-    """Read a gcov file and return (tree, version)."""
+def read_profile(path: str) -> tuple[dict[FuncKey, FuncNode], int, bytes]:
+    """Read a gcov file and return (tree, version, raw_summary_bytes)."""
     try:
         f: BinaryIO = open(path, "rb")
     except FileNotFoundError:
@@ -61,6 +63,7 @@ def read_profile(path: str) -> tuple[dict[FuncKey, FuncNode], int]:
     except OSError as e:
         sys.exit(f"error: cannot open {path}: {e}")
 
+    summary_bytes = b""
     try:
         magic = r32(f)
         if magic != GCOV_DATA_MAGIC:
@@ -71,7 +74,7 @@ def read_profile(path: str) -> tuple[dict[FuncKey, FuncNode], int]:
         r32(f)  # reserved
 
         if version >= 3:
-            _read_summary(f, path)
+            summary_bytes = _read_summary(f, path)
 
         names, file_table = _read_name_table(f, version, path)
         tree = _read_function_section(f, names, file_table, version, path)
@@ -80,20 +83,12 @@ def read_profile(path: str) -> tuple[dict[FuncKey, FuncNode], int]:
     finally:
         f.close()
 
-    return tree, version
+    return tree, version, summary_bytes
 
-def _read_summary(f: BinaryIO, path: str) -> None:
+def _read_summary(f: BinaryIO, path: str) -> bytes:
+    """Read the SUMMARY section and return the raw bytes (after the tag)."""
     _expect_tag(f, path, GCOV_TAG_AFDO_SUMMARY, "AFDO summary tag")
-    rcounter(f)  # total_count
-    rcounter(f)  # max_count
-    rcounter(f)  # max_function_count
-    rcounter(f)  # num_counts
-    rcounter(f)  # num_functions
-    num = rcounter(f)
-    for _ in range(num):
-        r32(f)      # cutoff
-        rcounter(f)  # min_count
-        rcounter(f)  # num_counts
+    return read_summary_raw(f)
 
 def _read_name_table(f: BinaryIO, version: int, path: str
                      ) -> tuple[list[tuple[str, int]], list[str]]:
@@ -171,6 +166,8 @@ def _read_function_instance(
         count = rcounter(f)
         node.positions[offset] += count
         node.total_count += count
+        if count == 0:
+            node.structural_zeros.add(offset)
         for _ in range(num_targets):
             t = r32(f)
             if t != HIST_TYPE_INDIR_CALL_TOPN:
@@ -256,11 +253,11 @@ def collect_strings_v3(
     tree: dict[FuncKey, FuncNode],
     threshold: int,
 ) -> None:
+    key = (node.name, node.source_file)
     if node.source_file:
         files.add(node.source_file)
-        key = (node.name, node.source_file)
-        if key not in func_to_file:
-            func_to_file[key] = node.source_file
+    if key not in func_to_file:
+        func_to_file[key] = node.source_file
 
     for _, _, targets in filtered_positions(node, threshold):
         for tkey in targets.keys():
@@ -333,7 +330,7 @@ def gen_strtable_v3(
 
     entries: list[tuple[str, int]] = []
     entry_index: dict[FuncKey, int] = {}
-    for key in sorted(tree.keys()):
+    for key in sorted(tree, key=lambda k: (k[0], k[1] or "")):
         name, src_file = key
         file_idx = file_index.get(src_file, -1) if src_file else -1
         entry_index[key] = len(entries)
@@ -430,7 +427,8 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
         wcounter(f, ds['num_counts'])
 
 def write_profile(path: str, tree: dict[FuncKey, FuncNode],
-                  gcov_version: int, threshold: int) -> None:
+                  gcov_version: int, threshold: int,
+                  summary_bytes: bytes = b"") -> None:
     if not tree:
         sys.exit("error: no functions to write (empty tree)")
 
@@ -440,8 +438,13 @@ def write_profile(path: str, tree: dict[FuncKey, FuncNode],
         w32(f, 0)
 
         if gcov_version >= 3:
-            summary = compute_summary(tree)
-            write_summary(f, summary)
+            if summary_bytes:
+                # Preserve original SUMMARY section verbatim (identity merge)
+                w32(f, GCOV_TAG_AFDO_SUMMARY)
+                f.write(summary_bytes)
+            else:
+                summary = compute_summary(tree)
+                write_summary(f, summary)
 
         w32(f, GCOV_TAG_AFDO_FILE_NAMES)
 
@@ -478,7 +481,7 @@ def write_profile(path: str, tree: dict[FuncKey, FuncNode],
         lenoff = f.tell()
         w32(f, 0)
         w32(f, len(tree))
-        for key in sorted(tree):
+        for key in sorted(tree, key=lambda k: (k[0], k[1] or "")):
             wfunc_node(f, tree[key], 0, entry_index, True,
                        gcov_version, threshold)
         endoff = f.tell()
@@ -487,7 +490,6 @@ def write_profile(path: str, tree: dict[FuncKey, FuncNode],
         f.seek(endoff)
 
         write_gcov_tail(f)
-
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Merge multiple gcov profile files")
@@ -509,22 +511,26 @@ def main() -> None:
         sys.exit("error: need at least one input file")
 
     versions = set()
-    trees: list[tuple[str, dict[FuncKey, FuncNode]]] = []
+    trees: list[tuple[str, dict[FuncKey, FuncNode], bytes]] = []
     for path in args.input_files:
-        tree, ver = read_profile(path)
+        tree, ver, summary_bytes = read_profile(path)
         versions.add(ver)
-        trees.append((path, tree))
+        trees.append((path, tree, summary_bytes))
 
     if len(versions) > 1:
         print(f"warning: mixed input versions {sorted(versions)}", file=sys.stderr)
 
-    dest = trees[0][1]
-    for src_path, src_tree in trees[1:]:
-        merge_profiles(dest, src_tree)
+    _, dest_tree, first_summary = trees[0]
+    for src_path, src_tree, _ in trees[1:]:
+        merge_profiles(dest_tree, src_tree)
+        # Clear summary_bytes so it's recomputed for multi-file merge
+        first_summary = b""
 
-    suffix.elide_tree_suffixes(dest, args.suffix_elision)
-    write_profile(args.output, dest, args.gcov_version, args.threshold)
-    print(f"Merged {len(trees)} profiles, {len(dest)} functions -> {args.output}")
+    suffix.elide_tree_suffixes(dest_tree, args.suffix_elision)
+
+    write_profile(args.output, dest_tree, args.gcov_version,
+                  args.threshold, first_summary)
+    print(f"Merged {len(trees)} profiles, {len(dest_tree)} functions -> {args.output}")
 
 
 if __name__ == '__main__':

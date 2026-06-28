@@ -12,6 +12,7 @@
 
 # open:
 # check buildid?
+# better way to handle PIE binaries. fix libbacktrace?
 
 import os
 import sys
@@ -211,7 +212,7 @@ def get_or_create_binary(dsoname: str, dso_map_start: int = 0, map_pgoff: int = 
     ctx = BinaryContext(dsoname)
     ctx.btstate = btstate
     # Only ET_DYN files (PIE/shared library) need load offset subtraction.
-    if dso_map_start and map_pgoff and is_position_independent(dsoname):
+    if is_position_independent(dsoname):
         ctx.load_offset = dso_map_start - map_pgoff
         vprint(f"  {os.path.basename(dsoname)}: load_offset=0x{ctx.load_offset:x}")
 
@@ -337,6 +338,11 @@ def gen_strtable(tree: dict[str, FuncNode]) -> tuple[list[str], dict[str, int]]:
 
 def _collect_strings_v2(node: FuncNode, out: set[str]) -> None:
     out.add(node.name)
+    # Collect target function names so string_index entries exist for
+    # indirect call targets whose names aren't in the profile tree.
+    for targets in node.targets.values():
+        for tkey in targets:
+            out.add(tkey[0] if isinstance(tkey, tuple) else tkey)
     for _, _, child in emitted_children(node):
         _collect_strings_v2(child, out)
 
@@ -368,7 +374,7 @@ def gen_strtable_v3(
     # Build ordered entry list (allows duplicate names with different files)
     entries: list[tuple[str, int]] = []
     entry_index: dict[FuncKey, int] = {}
-    for key in sorted(ctx.tree.keys()):
+    for key in sorted(ctx.tree, key=lambda k: (k[0], k[1] or "")):
         name, src_file = key
         file_idx = file_index.get(src_file, -1) if src_file else -1
         entry_index[key] = len(entries)
@@ -486,11 +492,11 @@ def write_summary(f: BinaryIO, summary: dict) -> None:
 def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
                        func_to_file: dict[FuncKey, str | None]) -> None:
     """Recursively collect source files and func_to_file mappings for v3 format."""
+    key = (node.name, node.source_file)
     if node.source_file:
         files.add(node.source_file)
-        key = (node.name, node.source_file)
-        if key not in func_to_file:
-            func_to_file[key] = node.source_file
+    if key not in func_to_file:
+        func_to_file[key] = node.source_file
 
     # Collect from call targets
     for _, _, targets in filtered_positions(node):
@@ -695,7 +701,7 @@ def add_dwarf_zero_scaffolding(ctx: BinaryContext) -> None:
 
     added_zeros = 0
 
-    for name, node in ctx.tree.items():
+    for key, node in ctx.tree.items():
         if not node.positions:
             continue
 
@@ -805,7 +811,7 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
 
             vprint("Writing %d functions to %s" % (len(ctx.tree), output_path))
             w32(f, len(ctx.tree))
-            for key in sorted(ctx.tree):
+            for key in sorted(ctx.tree, key=lambda k: (k[0], k[1] or "")):
                 wfunc_node(f, ctx.tree[key], 0, entry_index, True, ctx)
 
             if not pathlib.Path(f.name).is_fifo():

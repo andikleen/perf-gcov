@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Shared GCOV format constants and I/O helpers for perf-gcov tools
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -22,24 +21,20 @@ DEFAULT_CUTOFFS = [
     800000, 900000, 950000, 990000, 999000, 999900, 999990, 999999,
 ]
 
-
 def w32(f: BinaryIO, v: int) -> None:
     try:
         f.write(struct.pack("I", v))
     except struct.error:
         sys.exit("bad value for w32 %x" % v)
 
-
 def wstring(f: BinaryIO, s: str) -> None:
     s += "\0"
     w32(f, len(s))
     f.write(struct.pack("%ds" % len(s), s.encode('utf-8')))
 
-
 def wcounter(f: BinaryIO, v: int) -> None:
     w32(f, (v) & 0xffffffff)
     w32(f, (v >> 32) & 0xffffffff)
-
 
 def gen_offset(line: int, disc: int) -> int:
     """Generate 32-bit offset from line number and discriminator.
@@ -50,73 +45,75 @@ def gen_offset(line: int, disc: int) -> int:
     line = line & 0xFFFF if line < 0 else min(line, 0xFFFF)
     return (line << 16) | (disc & 0xFFFF)
 
-
 def r32(f: BinaryIO) -> int:
     return struct.unpack("I", f.read(4))[0]
-
 
 def rstring(f: BinaryIO) -> str:
     length = r32(f)
     s = f.read(length)
     return struct.unpack("%ds" % length, s)[0].decode('utf-8')[:-1]
 
-
 def rcounter(f: BinaryIO) -> int:
     a = r32(f)
     b = r32(f)
     return a | (b << 32)
 
+def read_summary_raw(f: BinaryIO) -> bytes:
+    """Read raw SUMMARY section data (after tag). Returns the raw bytes.
+
+    Layout: 6 × rcounter (48 bytes) header, then num × (r32 + rcounter + rcounter) entries.
+    """
+    header = f.read(48)
+    num_lo, num_hi = struct.unpack_from("<II", header, 40)
+    num = num_lo | (num_hi << 32)
+    detail = f.read(num * 20) if num else b""
+    return header + detail
 
 def expect(what: str, val: int, exp: int) -> None:
     if val != exp:
         sys.exit("for %s expect %x got val %x" % (what, exp, val))
 
-
 def warn_expect(what: str, val: int, exp: int) -> None:
     if val != exp:
         print("for %s expect %x got val %x" % (what, exp, val))
 
-
 def check_counter(count: int, max_count: int | None = None) -> None:
     if max_count and count > max_count:
         sys.exit("count value %d larger than %d" % (count, max_count))
-
 
 def fmt_offset(offset: int) -> str:
     if offset & 0xffff:
         return "%d.%d" % (offset >> 16, offset & 0xffff)
     return "%d" % (offset >> 16)
 
-
 class _V2Node(Protocol):
     """Minimal interface for FuncNode-like objects in v2 tree operations."""
     targets: dict[int, Counter]
     children: dict
 
-
 class _MergeableNode(_V2Node, Protocol):
     """Interface for nodes that can be merged via merge_nodes."""
     positions: Counter[int]
-
+    structural_zeros: set[int]
 
 def merge_nodes(dest: _MergeableNode, src: _MergeableNode) -> None:
-    """Merge src node's positions, targets, and children into dest.
+    """Merge src node's positions, targets, children, and structural_zeros into dest.
 
     Handles the common subset shared by all FuncNode-like trees:
-    positions (Counter), targets (dict[int, Counter[str]]), children.
+    positions (Counter), targets (dict[int, Counter[str]]), children, structural_zeros.
     """
     for off, count in src.positions.items():
         dest.positions[off] += count
     for off, src_targets in src.targets.items():
         for tgt, tgt_count in src_targets.items():
             dest.targets[off][tgt] += tgt_count
+    dest.structural_zeros.update(src.structural_zeros)
     for key, src_child in src.children.items():
         dest_child = dest.children.get(key)
         if dest_child is None:
             dest.children[key] = copy.deepcopy(src_child)
         else:
             merge_nodes(dest_child, src_child)
-
 
 def write_gcov_tail(f: BinaryIO) -> None:
     w32(f, GCOV_TAG_AFDO_MODULE_GROUPING)
@@ -126,7 +123,6 @@ def write_gcov_tail(f: BinaryIO) -> None:
     w32(f, GCOV_TAG_AFDO_WORKING_SET)
     w32(f, 4)
     w32(f, 0)
-
 
 def make_v2_merged_tree(tree: dict[FuncKey, Any]) -> dict[str, Any]:
     """Merge a composite-key (name, source_file) tree into a name-keyed tree for v2.
@@ -144,7 +140,6 @@ def make_v2_merged_tree(tree: dict[FuncKey, Any]) -> dict[str, Any]:
     _merge_v2_node_targets(merged)
     return merged
 
-
 def _merge_v2_node_targets(tree: dict[str, _V2Node]) -> None:
     for node in tree.values():
         for off in list(node.targets):
@@ -154,7 +149,6 @@ def _merge_v2_node_targets(tree: dict[str, _V2Node]) -> None:
             node.targets[off] = merged
         _merge_v2_child_targets(node)
 
-
 def _merge_v2_child_targets(node: _V2Node) -> None:
     for child in node.children.values():
         for off in list(child.targets):
@@ -163,7 +157,6 @@ def _merge_v2_child_targets(node: _V2Node) -> None:
                 merged[tkey[0] if isinstance(tkey, tuple) else tkey] += tcount
             child.targets[off] = merged
         _merge_v2_child_targets(child)
-
 
 def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
                                string_index: dict[str, int],
@@ -215,7 +208,6 @@ def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
 
     for coff, _, child in children:
         write_v2_function_instance(f, child, coff, string_index, threshold, toplevel=False)
-
 
 def write_v2_function_section(f: BinaryIO, tree: dict[str, Any],
                               string_index: dict[str, int],
