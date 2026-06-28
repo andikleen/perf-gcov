@@ -118,6 +118,7 @@ num_funcs = r32(f)
 print("num functions %d" % num_funcs)
 for i in range(num_funcs):
     head = rcounter(f)
+    ts = 0
     if version >= 3:
         ts = rcounter(f)  # timestamp (v3 only)
     fname = str_table[r32(f)]

@@ -751,6 +751,7 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
 
             w32(f, GCOV_TAG_AFDO_FILE_NAMES)
 
+            entry_index: dict[FuncKey, int] = {}
             if args.gcov_version == 2:
                 v2_tree = make_v2_merged_tree(ctx.tree)
                 string_table, string_index = gen_strtable(v2_tree)

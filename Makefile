@@ -45,7 +45,7 @@ clean:
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
 	test-suffix.py
 typecheck:
-	mypy ${PSRC} --check-untyped-defs --disallow-untyped-defs
+	pyright ${PSRC}
 
 lint:
 	flake8 ${PSRC}
