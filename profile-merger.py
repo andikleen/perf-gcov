@@ -480,7 +480,7 @@ def write_profile(path: str, tree: dict[FuncKey, FuncNode],
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Merge multiple gcov profile files")
-    ap.add_argument('input_files', nargs='+',
+    ap.add_argument('input_files', nargs='*',
                     help="Input gcov profile files")
     ap.add_argument('--output', '-o', '--output_file', default='merged.gcov',
                     help="Output gcov file (default: merged.gcov)")
@@ -495,7 +495,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if len(args.input_files) < 1:
-        sys.exit("error: need at least one input file")
+        sys.exit(0) # do nothing, needed for gcc autoprofiledbootstrap
 
     versions = set()
     trees: list[tuple[str, dict[FuncKey, FuncNode], bytes]] = []
