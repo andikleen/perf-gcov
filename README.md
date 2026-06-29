@@ -67,9 +67,6 @@ gcov.py --binary workload file.gcov
 gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 ```
 
-The gcov.py script is (mostly) argument compatible to autofdo's create\_gcov
-and can be used as a replacement in existing build systems.
-
 Or to avoid temporary files:
 
 ```
@@ -94,12 +91,17 @@ The default output is gcov-version 3 for gcc 16+. If you use gcc 15 or older add
 - gcov-stream-profile.sh - script to profile and generate gcov without temporary files
 - gcov-online-profile.sh - background gcov generation for all running binaries with debuginfo.
 
+## Compatibility
+
+gcov.py is (mostly) compatible to create\_gcov, and profile-merger.py mostly compatible to profile-merger. They can be used as a replacement in build systems.
+
 ## Differences to autofdo
 
 - Much less mature.
 - Not a nightmare to build (I hope)
 - Much simpler (but only focussed on the gcc job)
-- Much less memory use for large dumps.
+- Much less memory use for large input files because they are not completely
+loaded into memory.
 - Supports streaming mode to not save individual samples to disk.
 - Supports online mode for automatic background profiling
 - Some differences in output due to differences in dwarf processing
