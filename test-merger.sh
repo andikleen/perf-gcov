@@ -168,6 +168,21 @@ echo "garbage" > ${i}.bad
 cleanup_files="${cleanup_files} ${i}.bad"
 ${MERGER} ${i}.bad 2>&1 | grep -q "bad magic"
 echo "BAD FILE: OK"
+echo "=== EMPTY OUTPUT v3 ==="
+MERGE_OUT_EMPTY3="${i}.empty.3"
+cleanup_files="${cleanup_files} ${MERGE_OUT_EMPTY3}"
+${MERGER} --output_file ${MERGE_OUT_EMPTY3} --gcov-version 3
+test -s ${MERGE_OUT_EMPTY3}
+${DUMPER} ${MERGE_OUT_EMPTY3} 2>&1 | grep -q "num functions 0"
+echo "EMPTY OUTPUT V3: OK"
+
+echo "=== EMPTY OUTPUT v2 ==="
+MERGE_OUT_EMPTY2="${i}.empty.2"
+cleanup_files="${cleanup_files} ${MERGE_OUT_EMPTY2}"
+${MERGER} --output_file ${MERGE_OUT_EMPTY2} --gcov-version 2
+test -s ${MERGE_OUT_EMPTY2}
+${DUMPER} ${MERGE_OUT_EMPTY2} 2>&1 | grep -q "num functions 0"
+echo "EMPTY OUTPUT V2: OK"
 
 # Final cleanup via trap
 trap - EXIT

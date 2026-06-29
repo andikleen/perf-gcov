@@ -416,8 +416,6 @@ def compute_summary(tree: dict[FuncKey, FuncNode]) -> dict:
 def write_profile(path: str, tree: dict[FuncKey, FuncNode],
                   gcov_version: int, threshold: int,
                   summary_bytes: bytes = b"") -> None:
-    if not tree:
-        sys.exit("error: no functions to write (empty tree)")
 
     with open(path, "wb") as f:
         w32(f, GCOV_DATA_MAGIC)
@@ -493,12 +491,13 @@ def main() -> None:
                     default='all',
                     help="Suffix elision policy (default: %(default)s)")
     args = ap.parse_args()
-
-    if len(args.input_files) < 1:
-        sys.exit(0) # do nothing, needed for gcc autoprofiledbootstrap
-
-    versions = set()
+    if not args.input_files:
+        print(f"No input files, writing empty gcov to {args.output}", file=sys.stderr)
+        write_profile(args.output, {}, args.gcov_version, args.threshold)
+        return
+    versions: set[int] = set()
     trees: list[tuple[str, dict[FuncKey, FuncNode], bytes]] = []
+
     for path in args.input_files:
         tree, ver, summary_bytes = read_profile(path)
         versions.add(ver)
