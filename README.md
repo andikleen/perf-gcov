@@ -50,7 +50,7 @@ without installation.
 Profiling currently requires an Intel system with LBR support. This usually
 (but not always) means a non virtualized system, unless the hypervisor
 is set up to pass through LBR.  If running an old kernel
-kernel with a newer CPU it may also require updating the kernel.
+kernel with a newer CPU it may also require updating.
 
 Check if LBRs are available:
 ```
