@@ -45,7 +45,7 @@ clean:
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
 	test-suffix.py
 typecheck:
-	pyright ${PSRC}
+	PYRIGHT_PYTHON_FORCE_VERSION=latest pyright ${PSRC}
 
 lint:
 	flake8 ${PSRC}
