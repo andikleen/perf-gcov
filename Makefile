@@ -14,7 +14,7 @@ target := backtrace$(shell $(CONFIG) --extension-suffix)
 all: ${target}
 
 ${target}: backtracemodule.o 
-	gcc -shared -L. -o ${target} backtracemodule.o ${BACKTRACELIB} libbacktrace.a $(shell ${CONFIG} --ldflags --embed)
+	gcc -shared -L. -o ${target} backtracemodule.o ${BACKTRACELIB} libbacktrace.a $(shell ${CONFIG} --ldflags)
 
 backtracemodule.o: backtracemodule.c
 	gcc -Wall -I.  -fPIC $(shell ${CONFIG} --includes --cflags) -I ${BACKTRACESRC} -c backtracemodule.c
