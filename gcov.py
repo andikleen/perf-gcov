@@ -34,15 +34,17 @@ from format import *
 # Define argparse early so --help works without perf re-execution
 ap = argparse.ArgumentParser()
 ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file. Default file.gcov")
-ap.add_argument('--binary', action='append', default=[],
+ap.add_argument('--binary', '-binary', action='append', default=[],
                 help="Binary to profile (fnmatch pattern, repeatable). "
                      "If omitted, auto-discover all binaries.")
-ap.add_argument('--profile', '-i', help="Profile data. Default perf.data")
-ap.add_argument('--gcov', help="gcov output file")
-ap.add_argument('--profiler', help="set profiler type (nop)", choices=["perf"])
+ap.add_argument('--profile', '-i', '-profile',
+                help="Profile data. Default perf.data")
+ap.add_argument('--gcov', '-gcov', help="gcov output file")
+ap.add_argument('--profiler', '-profiler',
+                help="set profiler type (nop)", choices=["perf"])
 ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
 ap.add_argument('--verbose', action='store_true', help="Be more verbose")
-ap.add_argument('--gcov-version', '--gcov_version', type=int, choices=[2, 3], default=3,
+ap.add_argument('--gcov-version', '-gcov_version', type=int, choices=[2, 3], default=3,
                 help="GCOV version: 2 (upto gcc 15) or 3 (gcc 16+, default)")
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
