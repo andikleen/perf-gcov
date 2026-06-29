@@ -482,9 +482,9 @@ def main() -> None:
         description="Merge multiple gcov profile files")
     ap.add_argument('input_files', nargs='+',
                     help="Input gcov profile files")
-    ap.add_argument('--output', '-o', default='merged.gcov',
+    ap.add_argument('--output', '-o', '--output_file', default='merged.gcov',
                     help="Output gcov file (default: merged.gcov)")
-    ap.add_argument('--gcov-version', '--gcov_version',
+    ap.add_argument('--gcov-version', '--gcov_version', '-gcov_version',
                     type=int, choices=[2, 3], default=3,
                     help="Output gcov version (default: 3)")
     ap.add_argument('--threshold', type=int, default=10,
