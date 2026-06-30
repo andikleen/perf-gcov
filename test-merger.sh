@@ -90,11 +90,14 @@ ${MERGER} -o ${i}.two.3 --gcov-version 3 ${i}.1.3 ${i}.2.3
 test -s ${i}.two.3 && echo "TWO V3: OK"
 cleanup_files="${cleanup_files} ${i}.two.2 ${i}.two.3"
 
-# 4. Mixed version input
-echo "=== MIXED v2+v3 ==="
-${MERGER} -o ${i}.mix --gcov-version 3 ${i}.1.2 ${i}.1.3 2>&1
-echo "MIXED: OK"
-cleanup_files="${cleanup_files} ${i}.mix"
+# 4. Mixed version input should be rejected
+echo "=== MIXED v2+v3 REJECTED ==="
+if ${MERGER} -o ${i}.mix --gcov-version 3 ${i}.1.2 ${i}.1.3 2>&1 | grep -q "cannot merge mixed"; then
+	echo "MIXED REJECT: OK"
+else
+	echo "MIXED REJECT: FAIL - expected error on mixed versions"
+	exit 1
+fi
 
 # 5. Threshold filtering
 echo "=== THRESHOLD ==="

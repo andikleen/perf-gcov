@@ -14,7 +14,7 @@ class FuncNode:
     """A node in the profile tree, matching GCOV_TAG_AFDO_FUNCTION layout."""
 
     __slots__ = ("name", "source_file", "positions", "targets",
-                 "children", "head_count", "total_count", "timestamp",
+                 "children", "head_count", "timestamp",
                  "structural_zeros")
 
     def __init__(self, name: str, source_file: str | None = None,
@@ -25,7 +25,6 @@ class FuncNode:
         self.targets: dict[int, Counter[FuncKey]] = defaultdict(Counter)
         self.children: dict[tuple[int, str, str | None], "FuncNode"] = {}
         self.head_count = head_count
-        self.total_count = 0
         self.structural_zeros: set[int] = set()
         self.timestamp = timestamp
 
@@ -165,7 +164,6 @@ def _read_function_instance(
         num_targets = r32(f)
         count = rcounter(f)
         node.positions[offset] += count
-        node.total_count += count
         if count == 0:
             node.structural_zeros.add(offset)
         for _ in range(num_targets):
@@ -212,7 +210,6 @@ def merge_profiles(dest: dict[FuncKey, FuncNode],
 
 def _merge_node(dest: FuncNode, src: FuncNode) -> None:
     dest.head_count += src.head_count
-    dest.total_count += src.total_count
     if src.source_file and not dest.source_file:
         dest.source_file = src.source_file
     merge_nodes(dest, src)
@@ -243,7 +240,9 @@ def collect_strings(node: FuncNode, out: set[str], threshold: int) -> None:
     out.add(node.name)
     for _, _, targets in filtered_positions(node, threshold):
         for key in targets.keys():
-            out.add(key)  # type: ignore[arg-type]
+            # v2 string table is name-keyed; targets may still carry
+            # (name, src) tuples at this point, so narrow to the name.
+            out.add(key[0] if isinstance(key, tuple) else key)
     for _, _, child in emitted_children(node, threshold):
         collect_strings(child, out, threshold)
 
@@ -504,7 +503,8 @@ def main() -> None:
         trees.append((path, tree, summary_bytes))
 
     if len(versions) > 1:
-        print(f"warning: mixed input versions {sorted(versions)}", file=sys.stderr)
+        sys.exit(f"error: cannot merge mixed gcov versions {sorted(versions)}; "
+                 f"convert inputs to a single version first")
 
     _, dest_tree, first_summary = trees[0]
     for src_path, src_tree, _ in trees[1:]:
