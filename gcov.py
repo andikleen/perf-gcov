@@ -27,7 +27,7 @@ import itertools
 import os.path
 import subprocess
 import pathlib
-import backtrace
+import backtrace  # type: ignore[import-not-found]
 import suffix
 from format import *
 

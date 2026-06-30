@@ -185,8 +185,8 @@ def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
                                threshold: int, toplevel: bool = True) -> None:
     """Write one function instance in v2 format."""
     if toplevel:
-        head = node.head_count() if callable(node.head_count) else node.head_count
-        wcounter(f, head)
+        head_val = node.head_count() if callable(node.head_count) else node.head_count
+        wcounter(f, int(head_val))
         w32(f, string_index[node.name])
     else:
         w32(f, offset)
