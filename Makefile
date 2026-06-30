@@ -30,11 +30,14 @@ clean:
 		$(addsuffix .data.old,$(TESTS)) \
 		$(addsuffix .gcov,$(TESTS) $(MULTI_TESTS) libtlib.so ld-linux-x86-64.so.2 libc.so.6) \
 		$(addsuffix .gcov2,$(TESTS)) \
-		$(addsuffix .opt,$(TESTS)) \
+		$(addsuffix .gcov3,$(TESTS) $(MULTI_TESTS) libtlib.so ld-linux-x86-64.so.2 libc.so.6) \
+		$(addsuffix .opt,$(TESTS) $(MULTI_TESTS)) \
+		$(addsuffix .opt3,$(TESTS) $(MULTI_TESTS)) \
 		$(addsuffix .offsets,$(TESTS)) \
 		$(addsuffix .offsets2,$(TESTS)) \
-		$(addsuffix .dump,$(TESTS)) \
+		$(addsuffix .dump,$(TESTS) $(MULTI_TESTS) libtlib.so) \
 		$(addsuffix .dump2,$(TESTS)) \
+		$(addsuffix .dump3,$(TESTS) $(MULTI_TESTS) libtlib.so) \
 		$(addsuffix .diff,$(TESTS)) \
 		$(TESTS) $(MULTI_TESTS) \
 		libtlib.so run-tests-wrapper.sh \

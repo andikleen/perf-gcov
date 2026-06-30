@@ -15,6 +15,7 @@ trap failed ERR 0
 
 cleanup_multibin() {
 	rm -f ${cleanup_files}
+	rm -f tlibmain.gcov tlibmain.gcov3 tlibmain.dump3 libtlib.so.gcov libtlib.so.gcov3 libtlib.so.dump libtlib.so.dump3
 	rm -rf ${cleanup_dirs}
 }
 trap cleanup_multibin EXIT
@@ -152,6 +153,47 @@ if grep -q "lto_priv" tnonunique.dump; then
 fi
 cleanup_files="${cleanup_files} tnonunique.dump"
 echo "NON-UNIQUE SYMBOLS: OK"
+echo "=== SHARED LIBRARY RESOLUTION (tlibmain + libtlib.so) ==="
+
+# Build shared library and main binary
+$CC -g -O2 -fPIC -shared -o libtlib.so tlib.c
+$CC -g -O2 -o tlibmain tlibmain.c -L. -ltlib -Wl,-rpath,.
+cleanup_files="${cleanup_files} libtlib.so tlibmain"
+
+# Verify it runs
+echo "Verifying shared library test binary..."
+./tlibmain >/dev/null && echo "tlibmain OK"
+
+# Record profile with moderate iterations
+$PERF record -b -o tlibmain.data -c 10001 -e branches:ppu ./tlibmain 10000 >/dev/null 2>&1
+cleanup_files="${cleanup_files} tlibmain.data"
+
+# Auto-discover both binaries (no --binary filter)
+echo "--- Auto-discover (v2) ---"
+rm -f tlibmain.gcov libtlib.so.gcov
+$PERF script -i tlibmain.data ./gcov.py --gcov-version 2 2>&1 | tail -5
+
+# Verify shared library gcov was generated with its function
+test -f libtlib.so.gcov || { echo "FAIL: libtlib.so.gcov not generated"; exit 1; }
+echo "libtlib.so.gcov: OK"
+./gcov-dump.py libtlib.so.gcov > libtlib.so.dump
+cat libtlib.so.dump
+grep -q "^tlib_compute:" libtlib.so.dump || { echo "FAIL: tlib_compute missing from libtlib.so.gcov"; exit 1; }
+cleanup_files="${cleanup_files} libtlib.so.dump"
+echo "SHARED LIBRARY (v2): OK"
+
+echo "--- Auto-discover (v3) ---"
+rm -f libtlib.so.gcov
+$PERF script -i tlibmain.data ./gcov.py --gcov-version 3 2>&1 | tail -5
+test -f libtlib.so.gcov || { echo "FAIL: libtlib.so.gcov (v3) not generated"; exit 1; }
+echo "libtlib.so.gcov (v3): OK"
+./gcov-dump.py libtlib.so.gcov > libtlib.so.dump3
+cat libtlib.so.dump3
+grep -q "^tlib_compute:" libtlib.so.dump3 || { echo "FAIL: tlib_compute missing from libtlib.so (v3)"; exit 1; }
+cleanup_files="${cleanup_files} libtlib.so.dump3"
+echo "SHARED LIBRARY (v3): OK"
+
+echo "SHARED LIBRARY RESOLUTION: OK"
 
 # Final cleanup via trap
 trap - EXIT
