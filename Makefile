@@ -9,7 +9,7 @@ BACKTRACESRC := .
 # if pointing to gcc builddir use .libs/libbacktrace.a
 BACKTRACELIB := libbacktrace.a
 
-target := backtrace$(shell $(CONFIG) --extension-suffix)
+target = backtrace$(shell $(CONFIG) --extension-suffix)
 
 all: ${target}
 
