@@ -43,7 +43,7 @@ clean:
 	rm -rf $(DIRS)
 
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
-	test-suffix.py afdo-gcc.py
+	test-suffix.py afdo-gcc.py strip-types.py
 typecheck:
 	PYRIGHT_PYTHON_FORCE_VERSION=latest pyright ${PSRC}
 
