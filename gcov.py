@@ -27,9 +27,15 @@ import itertools
 import os.path
 import subprocess
 import pathlib
+
+# Add script directory to PYTHONPATH to find backtrace module when run from elsewhere
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
 import backtrace  # type: ignore[import-not-found]
 import suffix
-from format import *
+from format import *  # noqa: F403
 
 # Define argparse early so --help works without perf re-execution
 ap = argparse.ArgumentParser()
