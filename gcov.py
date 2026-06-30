@@ -21,6 +21,7 @@ import sys
 from collections import Counter, defaultdict
 from functools import cache
 from typing import NamedTuple, Any, BinaryIO
+from types import ModuleType
 import argparse
 import fnmatch
 import itertools
@@ -33,7 +34,11 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
-import backtrace  # type: ignore[import-not-found]
+backtrace: ModuleType | None
+try:
+    import backtrace  # type: ignore[import-not-found]
+except ModuleNotFoundError:
+    backtrace = None
 import suffix
 from format import *  # noqa: F403
 
@@ -93,6 +98,9 @@ if os.getenv('PERF_EXEC_PATH') is None:
                 break
     pargs = [perf, "script", "-i", data, sys.argv[0]] + sys.argv[1:]
     sys.exit(subprocess.run(pargs).returncode)
+
+if backtrace is None:
+    sys.exit("backtrace module not found or not matching python perf is built with")
 
 perf_exec_path = os.getenv('PERF_EXEC_PATH')
 assert perf_exec_path is not None  # Only reached under perf script
@@ -219,7 +227,7 @@ def get_or_create_binary(dsoname: str, dso_map_start: int = 0, map_pgoff: int = 
         return None
 
     try:
-        btstate = backtrace.createstate(dsoname)
+        btstate = backtrace.createstate(dsoname)  # type: ignore[union-attr]
     except Exception as e:
         print(f"warning: cannot create backtrace state for {dsoname}: {e}", file=sys.stderr)
         return None
@@ -931,7 +939,7 @@ def getframes(ctx: BinaryContext, ip: int) -> list[Frame] | None:
     if ip in ctx.frame_cache:
         return ctx.frame_cache[ip]
 
-    p = backtrace.pcinfo(ctx.btstate, ip)
+    p = backtrace.pcinfo(ctx.btstate, ip)  # type: ignore[union-attr]
     if p is None or len(p) == 0:
         ctx.frame_cache[ip] = None
         return None
