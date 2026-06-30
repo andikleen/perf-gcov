@@ -530,29 +530,20 @@ def expand_ranges(ctx: BinaryContext) -> None:
             count = ctx.range_counts[((begin, end), sym)]
             print(f"  [{begin:x}-{end:x}] ({sym}): count={count}")
 
-    valid_address_probes = 0
-    skipped_ranges = 0
-    missing_syms = 0
-    incomplete = 0
 
     address_count: dict[int, int] = defaultdict(int)
     address_sym: dict[int, str | None] = {}
 
     for ((begin, end), range_sym), range_count in ctx.range_counts.items():
-        range_has_data = False
         for addr in range(begin, end + 1, args.insn_range_stride):
             frames = getframes(ctx, addr)
             if frames is None:
                 continue
 
-            range_has_data = True
-            valid_address_probes += 1
             address_count[addr] += range_count
             if addr not in address_sym:
                 address_sym[addr] = range_sym
 
-        if not range_has_data:
-            skipped_ranges += 1
 
     position_max_counts: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], int] = {}
     position_source_files: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
@@ -564,7 +555,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
         root_frame = frames[0]
         if not root_frame.sym:
-            missing_syms += 1
+            stats.missing_symbols += 1
             continue
 
         perf_sym = address_sym.get(addr)
@@ -587,7 +578,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
             source_files.append(os.path.basename(fr.file) if fr.file else None)
 
         if len(names) != len(frames):
-            incomplete += 1
+            stats.incomplete_stacks += 1
             continue
 
         path: list[tuple[str, int]] = []
@@ -619,8 +610,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
         add_path(root, path, leaf_off, count, None, inline_source_files)
 
-    stats.missing_symbols += missing_syms
-    stats.incomplete_stacks += incomplete
 
 def add_branch_targets(ctx: BinaryContext) -> None:
     """Add call targets from branch_counts to the profile tree for one binary."""
