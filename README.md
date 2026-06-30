@@ -19,7 +19,7 @@ like online profiling.
 Get patched libbacktrace (temporary, until these changes are upstreamed)
 
 ```
-git clone --depth 10 -b libbacktrace-disc-8 https://github.com/andikleen/gcc gcc
+git clone --depth 10 -b libbacktrace-disc-9 https://github.com/andikleen/gcc gcc
 cd gcc/libbacktrace
 ./configure
 make
@@ -95,6 +95,8 @@ The default output is gcov-version 3 for gcc 16+. If you use gcc 15 or older add
 ## Compatibility
 
 gcov.py is (mostly) compatible to create\_gcov, and profile-merger.py mostly compatible to profile-merger. They can be used as a replacement in build systems.
+
+If needing to run on a older python version strip-types.py can be used to strip the type annotations from the python files.
 
 ## Differences to autofdo
 
