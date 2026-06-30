@@ -19,15 +19,16 @@
 import os
 import sys
 from collections import Counter, defaultdict
-from functools import cache
+from functools import lru_cache
 from typing import NamedTuple, Any, BinaryIO
 from types import ModuleType
 import argparse
 import fnmatch
 import itertools
-import os.path
 import subprocess
 import pathlib
+
+FRAME_CACHE_MAXSIZE = 65536
 
 # Add script directory to PYTHONPATH to find backtrace module when run from elsewhere
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -141,7 +142,6 @@ class Stats:
         self.output_branches = 0
 
         # Error/skip counters for diagnostics
-        self.dwarf_lookup_failures = 0  # Addresses with no DWARF info
         self.missing_symbols = 0         # Frames with no symbol name
         self.incomplete_stacks = 0       # Incomplete inline stacks
 
@@ -164,8 +164,6 @@ class BinaryContext:
         self.first_address_time: dict[int, int] = {}
         # Root function name -> first sample timestamp
         self.func_timestamp: dict[FuncKey, int] = {}
-        # Frame cache: addr -> frames | None
-        self.frame_cache: dict[int, list[Frame] | None] = {}
         # Sample count for --min-samples filtering
         self.sample_count = 0
         # Whether we have printed per-binary warnings (to avoid spamming)
@@ -187,7 +185,7 @@ def is_file_dso(dsoname: str) -> bool:
     """Check if DSO is a real file (not kernel, vdso, etc.)."""
     return not dsoname.startswith('[') and '/' in dsoname
 
-@cache
+@lru_cache(maxsize=None)
 def is_position_independent(dsoname: str) -> bool:
     """Return True if the ELF file is ET_DYN (PIE or shared library).
     Results are cached per dsoname."""
@@ -534,12 +532,11 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
     valid_address_probes = 0
     skipped_ranges = 0
-    dwarf_failures = 0
     missing_syms = 0
     incomplete = 0
 
-    address_counts: dict[int, int] = defaultdict(int)
-    address_symbols: dict[int, str | None] = {}
+    address_count: dict[int, int] = defaultdict(int)
+    address_sym: dict[int, str | None] = {}
 
     for ((begin, end), range_sym), range_count in ctx.range_counts.items():
         range_has_data = False
@@ -550,10 +547,9 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
             range_has_data = True
             valid_address_probes += 1
-
-            address_counts[addr] += range_count
-            if addr not in address_symbols:
-                address_symbols[addr] = range_sym
+            address_count[addr] += range_count
+            if addr not in address_sym:
+                address_sym[addr] = range_sym
 
         if not range_has_data:
             skipped_ranges += 1
@@ -561,10 +557,9 @@ def expand_ranges(ctx: BinaryContext) -> None:
     position_max_counts: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], int] = {}
     position_source_files: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
 
-    for addr, addr_count in address_counts.items():
+    for addr, addr_count in address_count.items():
         frames = getframes(ctx, addr)
         if frames is None:
-            dwarf_failures += 1
             continue
 
         root_frame = frames[0]
@@ -572,7 +567,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
             missing_syms += 1
             continue
 
-        perf_sym = address_symbols.get(addr)
+        perf_sym = address_sym.get(addr)
         if perf_sym and root_frame.sym in perf_sym:
             root_name = perf_sym
         else:
@@ -624,7 +619,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
         add_path(root, path, leaf_off, count, None, inline_source_files)
 
-    stats.dwarf_lookup_failures += dwarf_failures
     stats.missing_symbols += missing_syms
     stats.incomplete_stacks += incomplete
 
@@ -827,7 +821,7 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
                 write_gcov_tail(f)
 
         os.rename(tmp_path, output_path)
-    except BaseException:
+    except Exception:
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -896,8 +890,6 @@ def trace_end() -> None:
     for dsoname in written:
         vprint(f"  {os.path.basename(dsoname)}")
 
-    if stats.dwarf_lookup_failures > 0:
-        vprint(f"Note: {stats.dwarf_lookup_failures} addresses had no DWARF info")
     if stats.missing_symbols > 0:
         vprint(f"Note: {stats.missing_symbols} frames had no symbol names")
     if stats.incomplete_stacks > 0:
@@ -934,14 +926,11 @@ def update_node_branch_counts(node: FuncNode) -> None:
 # Return the inline/frame stack for IP as a list of Frame, ordered from the
 # outermost (real, symbol-table) function down to the innermost inlined
 # frame. Returns None if the address cannot be resolved.
+@lru_cache(maxsize=FRAME_CACHE_MAXSIZE)
 def getframes(ctx: BinaryContext, ip: int) -> list[Frame] | None:
     """Cached lookup of inline call stack for address in a specific binary."""
-    if ip in ctx.frame_cache:
-        return ctx.frame_cache[ip]
-
     p = backtrace.pcinfo(ctx.btstate, ip)  # type: ignore[union-attr]
     if p is None or len(p) == 0:
-        ctx.frame_cache[ip] = None
         return None
     op = p[0]
     # pcinfo entry layout: (PC, filename, lineno, function, disc, decl_line)
@@ -949,10 +938,8 @@ def getframes(ctx: BinaryContext, ip: int) -> list[Frame] | None:
     frames = [Frame(x[1], x[2], x[4], x[3], x[5])
               for x in itertools.takewhile(lambda x: x[0] == op[0], p)]
     if frames[0].file is None:
-        ctx.frame_cache[ip] = None
         return None
     frames.reverse()
-    ctx.frame_cache[ip] = frames
     return frames
 
 def frame_offset(fr: Frame, ctx: BinaryContext) -> int:

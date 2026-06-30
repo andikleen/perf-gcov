@@ -28,7 +28,7 @@ class TypeStripper(ast.NodeTransformer):
         return node
 
     def visit_AsyncFunctionDef(self, node):
-        return self.visit_FunctionDef(node)
+        return self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
     def visit_AnnAssign(self, node):
         # Convert annotated assignment to regular assignment
