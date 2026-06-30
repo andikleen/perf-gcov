@@ -435,7 +435,7 @@ def write_profile(path: str, tree: dict[FuncKey, FuncNode],
         if gcov_version == 2:
             v2_tree = make_v2_merged_tree(tree)
             string_table, string_index = gen_strtable(v2_tree, threshold)
-            length = 4 + sum(len(s) + 5 for s in string_table)
+            length = 4 + sum(4 + wstring_nbytes(s) for s in string_table)
             w32(f, length)
             w32(f, len(string_table))
             for fn in string_table:
@@ -447,9 +447,9 @@ def write_profile(path: str, tree: dict[FuncKey, FuncNode],
 
         ft, fi, entries, entry_index = gen_strtable_v3(tree, threshold)
         length = 4
-        length += sum(len(fname) + 5 for fname in ft)
+        length += sum(4 + wstring_nbytes(fname) for fname in ft)
         length += 4
-        length += sum(len(name) + 5 + 4 for name, _ in entries)
+        length += sum(4 + wstring_nbytes(name) + 4 for name, _ in entries)
         w32(f, length)
 
         w32(f, len(ft))

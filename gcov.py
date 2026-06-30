@@ -74,7 +74,11 @@ if os.getenv('PERF_EXEC_PATH') is None:
             data = arg.split("=", 1)[1]
             sys.argv.remove(arg)
             break
-        if arg == "--profile" or arg == "-i":
+        if arg.startswith("-profile="):
+            data = arg.split("=", 1)[1]
+            sys.argv.remove(arg)
+            break
+        if arg == "--profile" or arg == "-profile" or arg == "-i":
             i = sys.argv.index(arg)
             if i + 1 < len(sys.argv):
                 del sys.argv[i]
@@ -414,6 +418,7 @@ def compute_summary(ctx: BinaryContext) -> dict:
 
         # Collect all position counts from this node
         for offset, count in node.positions.items():
+            # Exclude scaffolding zeros (gcov.py injects them; autofdo doesn't)
             if count > 0:
                 total_count += count
                 max_count = max(max_count, count)
@@ -501,9 +506,9 @@ def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
 def expand_ranges(ctx: BinaryContext) -> None:
     """Expand range_counts into position counts in the profile tree for one binary.
 
-    1. For each range, add range count to EVERY valid address in the range
-    2. Multiple addresses may map to the same source position (different discriminators)
-    3. For each source position, take the MAXIMUM count from all addresses that map to it."""
+    Overlapping ranges SUM per address, then addresses mapping to the same
+    source (line,disc) take MAX. Matches autofdo: profile.cc:173 (SUM),
+    symbol_map.cc:572-573 (MAX)."""
 
     vprint(f"Expanding {len(ctx.range_counts)} ranges for {os.path.basename(ctx.dsoname)}...")
 
@@ -760,7 +765,7 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
             if args.gcov_version == 2:
                 v2_tree = make_v2_merged_tree(ctx.tree)
                 string_table, string_index = gen_strtable(v2_tree)
-                length = 4 + sum((len(s) + 5) for s in string_table)
+                length = 4 + sum((4 + wstring_nbytes(s)) for s in string_table)
                 w32(f, length)
                 w32(f, len(string_table))
                 for fn in string_table:
@@ -769,17 +774,14 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
                 vprint("Writing %d functions to %s" % (len(v2_tree), output_path))
                 write_v2_function_section(f, v2_tree, string_index, args.threshold)
                 write_gcov_tail(f)
-                os.rename(tmp_path, output_path)
-                print(f"Wrote {output_path}")
-                return True
 
             elif args.gcov_version == 3:
                 file_table, file_index, entries, entry_index = gen_strtable_v3(ctx)
 
                 length = 4
-                length += sum(len(fname) + 5 for fname in file_table)
+                length += sum(4 + wstring_nbytes(fname) for fname in file_table)
                 length += 4
-                length += sum(len(name) + 5 + 4 for name, _ in entries)
+                length += sum(4 + wstring_nbytes(name) + 4 for name, _ in entries)
 
                 w32(f, length)
 
@@ -792,23 +794,23 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
                     wstring(f, func_name)
                     w32(f, file_idx if file_idx >= 0 else 0xFFFFFFFF)
 
-            w32(f, GCOV_TAG_AFDO_FUNCTION)
-            lenoff = f.tell()
-            w32(f, 0)
+                w32(f, GCOV_TAG_AFDO_FUNCTION)
+                lenoff = f.tell()
+                w32(f, 0)
 
-            vprint("Writing %d functions to %s" % (len(ctx.tree), output_path))
-            w32(f, len(ctx.tree))
-            for key in sorted(ctx.tree, key=lambda k: (k[0], k[1] or "")):
-                wfunc_node(f, ctx.tree[key], 0, entry_index, True, ctx)
+                vprint("Writing %d functions to %s" % (len(ctx.tree), output_path))
+                w32(f, len(ctx.tree))
+                for key in sorted(ctx.tree, key=lambda k: (k[0], k[1] or "")):
+                    wfunc_node(f, ctx.tree[key], 0, entry_index, True, ctx)
 
-            if not pathlib.Path(f.name).is_fifo():
-                endoff = f.tell()
-                f.seek(lenoff, 0)
-                vprint("Data length %d" % (endoff - lenoff))
-                w32(f, endoff - lenoff)
-                f.seek(endoff, 0)
+                if not pathlib.Path(f.name).is_fifo():
+                    endoff = f.tell()
+                    f.seek(lenoff, 0)
+                    vprint("Data length %d" % (endoff - lenoff))
+                    w32(f, endoff - lenoff)
+                    f.seek(endoff, 0)
 
-            write_gcov_tail(f)
+                write_gcov_tail(f)
 
         os.rename(tmp_path, output_path)
     except BaseException:

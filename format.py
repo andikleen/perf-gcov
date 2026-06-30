@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import copy
+import pathlib
 import struct
 import sys
 from collections import Counter
@@ -27,10 +28,15 @@ def w32(f: BinaryIO, v: int) -> None:
     except struct.error:
         raise ValueError("bad value for w32 %x" % v)
 
+def wstring_nbytes(s: str) -> int:
+    """Return byte count for wstring(s): null-terminated UTF-8 encoding."""
+    return len((s + "\0").encode('utf-8'))
+
 def wstring(f: BinaryIO, s: str) -> None:
-    s += "\0"
-    w32(f, len(s))
-    f.write(struct.pack("%ds" % len(s), s.encode('utf-8')))
+    """Write length-prefixed null-terminated UTF-8 string."""
+    b = (s + "\0").encode('utf-8')
+    w32(f, len(b))
+    f.write(b)
 
 def wcounter(f: BinaryIO, v: int) -> None:
     w32(f, (v) & 0xffffffff)
@@ -235,7 +241,8 @@ def write_v2_function_section(f: BinaryIO, tree: dict[str, Any],
     w32(f, len(tree))
     for name in sorted(tree):
         write_v2_function_instance(f, tree[name], 0, string_index, threshold)
-    endoff = f.tell()
-    f.seek(lenoff)
-    w32(f, endoff - lenoff)
-    f.seek(endoff)
+    if not pathlib.Path(f.name).is_fifo():
+        endoff = f.tell()
+        f.seek(lenoff)
+        w32(f, endoff - lenoff)
+        f.seek(endoff)
