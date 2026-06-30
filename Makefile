@@ -43,7 +43,7 @@ clean:
 	rm -rf $(DIRS)
 
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
-	test-suffix.py
+	test-suffix.py afdo-gcc.py
 typecheck:
 	PYRIGHT_PYTHON_FORCE_VERSION=latest pyright ${PSRC}
 
@@ -55,3 +55,4 @@ test:
 	./test-gcov-online.sh
 	./test-multi-binary.sh
 	./test-merger.sh
+	./test-afdo-wrap.sh
