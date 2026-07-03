@@ -117,10 +117,10 @@ local i=$1
 shift
 local sources="$@"
 $CC -g -O2 -flto -o ${i} ${sources}
-$PERF record -b -o ${i}.data -c 100003 -e branches:ppu ./${i}
+$PERF record -b -o ${i}.data -c 50001 -e branches:ppu ./${i}
 
 # Test v2 (default test, backward compatibility)
-$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
+$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --min-samples 1 --binary ${i} --gcov-version 2
 ./gcov-dump.py --max-count 3000000 ${i}.gcov
 if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
@@ -132,7 +132,7 @@ fi
 
 # Test v3
 echo "=== Testing GCOV v3 format ==="
-$PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-version 3
+$PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --min-samples 1 --binary ${i} --gcov-version 3
 echo "v3 dump:"
 ./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
@@ -154,10 +154,10 @@ cleanup_test_files ${i}
 test() {
 local i=$1
 $CC -g -O2 -o ${i} ${i}.c
-$PERF record -b -o ${i}.data -c 100003 -e branches:ppu ./${i}
+$PERF record -b -o ${i}.data -c 50001 -e branches:ppu ./${i}
 
 # Test v2 (default test, backward compatibility)
-$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
+$PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --min-samples 1 --binary ${i} --gcov-version 2
 ./gcov-dump.py --max-count 3000000 ${i}.gcov
 if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
@@ -169,7 +169,7 @@ fi
 
 # Test v3 (new format with source files)
 echo "=== Testing GCOV v3 format ==="
-$PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-version 3
+$PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --min-samples 1 --binary ${i} --gcov-version 3
 echo "v3 dump:"
 ./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
