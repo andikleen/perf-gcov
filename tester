@@ -32,29 +32,43 @@ fi
 
 cleanup_test_files() {
 	local i=$1
-	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2 ${i}.stream.gcov
+	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.dump3v ${i}.dump3v2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2 ${i}.gcov3_ref ${i}.stream.gcov
 }
 
-# Compare gcov.py output with create_gcov reference
+# Compare gcov.py output with create_gcov reference.
+# Usage: diff_check <testname> [version]
+#   version defaults to 2; gcov.py uses ${i}.gcov, reference stored as ${i}.gcov2
+#   version 3: gcov.py uses ${i}.gcov3, reference stored as ${i}.gcov3_ref
 diff_check() {
 	local i=$1
+	local version=${2:-2}
+	local gcov_file="${i}.gcov"
+	local gcov_ref="${i}.gcov2"
+	local dump_file="${i}.dump"
+	local ref_dump="${i}.dump2"
+	if [ "$version" = "3" ] ; then
+		gcov_file="${i}.gcov3"
+		gcov_ref="${i}.gcov3_ref"
+		dump_file="${i}.dump3v"
+		ref_dump="${i}.dump3v2"
+	fi
 	if [ -z "$(type -p create_gcov)" ] ; then
 		echo "create_gcov not found, skipping reference comparison"
 		return 0
 	fi
-	echo "autofdo dump"
-	dump_gcov ${i}.gcov > ${i}.dump
-	cat ${i}.dump
-	create_gcov -gcov_version 2 --binary ${i} --gcov ${i}.gcov2 --profile ${i}.data
-	echo "autofdo reference dump"
-	dump_gcov ${i}.gcov2 > ${i}.dump2
-	cat ${i}.dump2
-	echo "diff gcov.py vs create_gcov"
-	if ! diff -u ${i}.dump ${i}.dump2 ; then
+	echo "autofdo dump (v${version})"
+	dump_gcov ${gcov_file} > ${dump_file}
+	cat ${dump_file}
+	create_gcov -gcov_version ${version} --binary ${i} --gcov ${gcov_ref} --profile ${i}.data
+	echo "autofdo reference dump (v${version})"
+	dump_gcov ${gcov_ref} > ${ref_dump}
+	cat ${ref_dump}
+	echo "diff gcov.py vs create_gcov (v${version})"
+	if ! diff -u ${dump_file} ${ref_dump} ; then
 		echo "non-identical dump accepted; checking non-zero offsets"
 	fi
-	awk '/^[[:space:]]+[0-9]+(\.[0-9]+)?:/ && $2 != 0 { sub(/^[[:space:]]+/, ""); sub(/:.*/, ""); sub(/\..*/, ""); print }' ${i}.dump | sort -u > ${i}.offsets
-	awk '/^[[:space:]]+[0-9]+(\.[0-9]+)?:/ && $2 != 0 { sub(/^[[:space:]]+/, ""); sub(/:.*/, ""); sub(/\..*/, ""); print }' ${i}.dump2 | sort -u > ${i}.offsets2
+	awk '/^[[:space:]]+[0-9]+(\.[0-9]+)?:/ && $2 != 0 { sub(/^[[:space:]]+/, ""); sub(/:.*/, ""); sub(/\..*/, ""); print }' ${dump_file} | sort -u > ${i}.offsets
+	awk '/^[[:space:]]+[0-9]+(\.[0-9]+)?:/ && $2 != 0 { sub(/^[[:space:]]+/, ""); sub(/:.*/, ""); sub(/\..*/, ""); print }' ${ref_dump} | sort -u > ${i}.offsets2
 	comm -23 ${i}.offsets ${i}.offsets2 > ${i}.offsets.missing
 	if [ -s ${i}.offsets.missing ] ; then
 		echo "source line offsets missing from create_gcov reference"
@@ -122,6 +136,9 @@ $PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-vers
 echo "v3 dump:"
 ./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
+if [ -n "$(type -p dump_gcov)" ] ; then
+	diff_check ${i} 3
+fi
 
 if [ $GCC_GCOV_VERSION == 3 ] ; then
 	$CC -g -O2 -flto -fauto-profile=${i}.gcov3 ${sources} -o ${i}.opt3
@@ -156,6 +173,9 @@ $PERF script -i ${i}.data gcov.py ${i}.gcov3 --verbose --binary ${i} --gcov-vers
 echo "v3 dump:"
 ./gcov-dump.py ${i}.gcov3 > ${i}.dump3
 cat ${i}.dump3
+if [ -n "$(type -p dump_gcov)" ] ; then
+	diff_check ${i} 3
+fi
 
 if [ $GCC_GCOV_VERSION == 3 ] ; then
 	$CC -g -O2 -fauto-profile=${i}.gcov3 ${i}.c -o ${i}.opt3
