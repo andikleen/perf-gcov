@@ -140,7 +140,7 @@ It assumes that the output name of the linking is the same as the final binary n
 ## Credits
 
 Andi Kleen with some AI help. Original concept and some algorithms
-inspired by [autofdo](https://github.com/google/autofdo). The dwarf
+inspired by [autofdo](https://github.com/google/autofdo) ([paper](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/45290.pdf)). The dwarf
 parsing is relying on Ian Lance Taylor's
 [libbacktrace](https://github.com/ianlancetaylor/libbacktrace) as integrated into gcc.
 
