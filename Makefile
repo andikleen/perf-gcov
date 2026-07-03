@@ -60,3 +60,4 @@ test:
 	./test-multi-binary.sh
 	./test-merger.sh
 	./test-afdo-wrap.sh
+	./test-parallel.sh

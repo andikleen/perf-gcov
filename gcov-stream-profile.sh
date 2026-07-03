@@ -164,7 +164,7 @@ if [[ ! -x "$GCOV_PY" ]]; then
 fi
 
 # Build perf record command
-PERF_CMD="perf record -b -e $EVENT"
+PERF_CMD="perf record -b -c 100003 -e $EVENT"
 if [[ -n "$COUNT" ]]; then
   PERF_CMD="$PERF_CMD -c $COUNT"
 fi

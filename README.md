@@ -94,6 +94,7 @@ make CC=afdo-gcc.py CXX=afdo-g++.py CFLAGS="--afdo-dir gcovdir -O2" CXXFLAGS="--
 - gcov-stream-profile.sh - script to profile and generate gcov without temporary files
 - gcov-online-profile.sh - background gcov generation for all running binaries with debuginfo
 - afdo-gcc.py / afdo-g++ - compiler wrapper that auto-injects -fauto-profile for LTO link steps
+- gcov-parallel.sh - parallelize gcov.py over multiple CPUs for large input files
 
 ## Compatibility
 
