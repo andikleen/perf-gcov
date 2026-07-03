@@ -117,7 +117,7 @@ local i=$1
 shift
 local sources="$@"
 $CC -g -O2 -flto -o ${i} ${sources}
-$PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
+$PERF record -b -o ${i}.data -c 100003 -e branches:ppu ./${i}
 
 # Test v2 (default test, backward compatibility)
 $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
@@ -154,7 +154,7 @@ cleanup_test_files ${i}
 test() {
 local i=$1
 $CC -g -O2 -o ${i} ${i}.c
-$PERF record -b -o ${i}.data -c 10001 -e branches:ppu ./${i}
+$PERF record -b -o ${i}.data -c 100003 -e branches:ppu ./${i}
 
 # Test v2 (default test, backward compatibility)
 $PERF script -i ${i}.data gcov.py ${i}.gcov --verbose --binary ${i} --gcov-version 2
