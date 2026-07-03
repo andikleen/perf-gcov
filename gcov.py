@@ -491,7 +491,6 @@ def compute_summary(ctx: BinaryContext) -> dict:
         'detailed_summaries': detailed_summaries
     }
 
-
 def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
                        func_to_file: dict[FuncKey, str | None]) -> None:
     """Recursively collect source files and func_to_file mappings for v3 format."""
@@ -513,7 +512,6 @@ def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
     # Recurse into inline children
     for _, _, child in emitted_children(node):
         collect_strings_v3(ctx, child, files, func_to_file)
-
 
 def expand_ranges(ctx: BinaryContext) -> None:
     """Expand range_counts into position counts in the profile tree for one binary.
@@ -606,7 +604,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
                 root.positions[root_call_offset] = count
 
         add_path(root, path, leaf_off, count, None, inline_source_files)
-
 
 def add_branch_targets(ctx: BinaryContext) -> None:
     """Add call targets from branch_counts to the profile tree for one binary."""
@@ -705,6 +702,7 @@ def propagate_head_counts(tree: dict[FuncKey, FuncNode]) -> None:
         node = tree.get(callee_key)
         if node is not None:
             node.head_count_value = count
+
 def propagate_timestamps(ctx: BinaryContext) -> None:
     """Resolve unique LBR FROM addresses to per-function timestamps.
 
