@@ -291,7 +291,10 @@ def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
 
 def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[FuncKey]]]:
     positions = []
+    child_offsets = {coff for (coff, _, _) in emitted_children(node)}
     for off in sorted(node.positions):
+        if off in child_offsets:
+            continue
         count = node.positions[off]
         targets = Counter({key: target_count
                            for key, target_count in node.targets.get(off, Counter()).items()

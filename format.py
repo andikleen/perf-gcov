@@ -191,9 +191,21 @@ def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
     else:
         w32(f, offset)
         w32(f, string_index[node.name])
+    # Compute children first (needed for child offset filtering below)
+    children: list[tuple[int, str, Any]] = []
+    for (coff, cname, csrc), child in sorted(node.children.items()):
+        try:
+            has_output = child.has_output(threshold)
+        except TypeError:
+            has_output = child.has_output()
+        if has_output:
+            children.append((coff, cname, child))
+    child_offsets = {coff for (coff, _, _) in children}
 
     positions: list[tuple[int, int, Counter[str]]] = []
     for off in sorted(node.positions):
+        if off in child_offsets:
+            continue
         count = node.positions[off]
         targets: Counter[str] = Counter()
         for name, c in node.targets.get(off, Counter()).items():
@@ -206,15 +218,6 @@ def write_v2_function_instance(f: BinaryIO, node: Any, offset: int,
         elif count < threshold:
             continue
         positions.append((off, count, targets))
-
-    children: list[tuple[int, str, Any]] = []
-    for (coff, cname, csrc), child in sorted(node.children.items()):
-        try:
-            has_output = child.has_output(threshold)
-        except TypeError:
-            has_output = child.has_output()
-        if has_output:
-            children.append((coff, cname, child))
 
     w32(f, len(positions))
     w32(f, len(children))
