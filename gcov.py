@@ -244,7 +244,7 @@ class FuncNode:
     Inlined callees are stored as child nodes keyed by the call offset in
     this function and the callee name, mirroring gcc's nested
     GCOV_TAG_AFDO_FUNCTION layout"""
-    __slots__ = ("name", "source_file", "positions", "targets", "children", "structural_zeros")
+    __slots__ = ("name", "source_file", "positions", "targets", "children", "structural_zeros", "head_count_value")
 
     def __init__(self, name: str, source_file: str | None = None):
         self.name = name
@@ -260,6 +260,7 @@ class FuncNode:
         # NOTE: This is runtime-only state used during tree construction;
         # it is not directly persisted to the GCOV file format.
         self.structural_zeros: set[int] = set()
+        self.head_count_value: int = 0
 
     def child(self, offset: int, name: str, source_file: str | None = None) -> "FuncNode":
         key = (offset, name, source_file)
@@ -270,8 +271,7 @@ class FuncNode:
         return node
 
     def head_count(self) -> int:
-        # Emit 0 for head count; GCC computes effective entry count from max(positions)
-        return 0
+        return self.head_count_value
 
     def has_output(self) -> bool:
         if filtered_positions(self):
@@ -681,6 +681,25 @@ def add_branch_targets(ctx: BinaryContext) -> None:
 
     vprint(f"Added {added_targets} call targets")
 
+def propagate_head_counts(tree: dict[FuncKey, FuncNode]) -> None:
+    """Sum incoming call targets per callee and store as head_count_value."""
+    incoming: Counter[FuncKey] = Counter()
+
+    def walk(node: FuncNode) -> None:
+        for targets in node.targets.values():
+            for callee_key, count in targets.items():
+                incoming[callee_key] += count
+        for child in node.children.values():
+            walk(child)
+
+    for root in tree.values():
+        walk(root)
+
+    for callee_key, count in incoming.items():
+        node = tree.get(callee_key)
+        if node is not None:
+            node.head_count_value = count
+
 def add_dwarf_zero_scaffolding(ctx: BinaryContext) -> None:
     """Add zero-count positions at function boundaries for one binary."""
 
@@ -834,9 +853,9 @@ def trace_end() -> None:
     for dsoname, ctx in active_binaries.items():
         basename = os.path.basename(dsoname)
         vprint(f"\nProcessing {basename} ({ctx.sample_count} samples)...")
-
         expand_ranges(ctx)
         add_branch_targets(ctx)
+        propagate_head_counts(ctx.tree)
         add_dwarf_zero_scaffolding(ctx)
         suffix.elide_tree_suffixes(ctx.tree, args.suffix_elision)
 
