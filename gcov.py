@@ -563,7 +563,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
             root_name = perf_sym
         else:
             root_name = root_frame.sym
-        root_source_file = os.path.basename(root_frame.file) if root_frame.file else None
+        root_source_file = root_frame.file if root_frame.file else None
 
 
         names: list[str] = [root_name]
@@ -572,7 +572,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
             if not fr.sym:
                 break
             names.append(fr.sym)
-            source_files.append(os.path.basename(fr.file) if fr.file else None)
+            source_files.append(fr.file if fr.file else None)
 
         if len(names) != len(frames):
             stats.incomplete_stacks += 1
@@ -648,8 +648,8 @@ def add_branch_targets(ctx: BinaryContext) -> None:
         else:
             continue
 
-        sroot_source_file = os.path.basename(sroot.file) if sroot.file else None
-        droot_source_file = os.path.basename(droot.file) if droot.file else None
+        sroot_source_file = sroot.file if sroot.file else None
+        droot_source_file = droot.file if droot.file else None
 
         root = ctx.root(sroot_name, sroot_source_file)
         names: list[str] = [sroot_name]
@@ -658,7 +658,7 @@ def add_branch_targets(ctx: BinaryContext) -> None:
             if not fr.sym:
                 break
             names.append(fr.sym)
-            source_files.append(os.path.basename(fr.file) if fr.file else None)
+            source_files.append(fr.file if fr.file else None)
 
         if len(names) != len(sframes):
             continue
@@ -720,7 +720,7 @@ def propagate_timestamps(ctx: BinaryContext) -> None:
         if not root.sym:
             continue
         root_name = root.sym
-        root_source_file = os.path.basename(root.file) if root.file else None
+        root_source_file = root.file if root.file else None
         root_key = (root_name, root_source_file)
         old = ctx.func_timestamp.get(root_key)
         if old is None or sample_time < old:
