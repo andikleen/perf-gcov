@@ -155,8 +155,8 @@ class BinaryContext:
         self.tree: dict[FuncKey, FuncNode] = {}
         # Range-based profile data (LBR-derived ranges)
         self.range_counts: Counter[tuple[tuple[int, int], str | None]] = Counter()
-        # ((from_addr, to_addr), from_sym, to_sym) -> count
-        self.branch_counts: Counter[tuple[tuple[int, int], str | None, str | None]] = Counter()
+        # ((from_addr, to_addr), from_sym, to_sym, from_off, to_off) -> count
+        self.branch_counts: Counter[tuple[tuple[int, int], str | None, str | None, int | None, int | None]] = Counter()
         # Timestamp tracking: first sample time per function
         self.first_address_time: dict[int, int] = {}
         # Root function name -> first sample timestamp
@@ -614,7 +614,7 @@ def add_branch_targets(ctx: BinaryContext) -> None:
     vprint(f"Adding call targets from {len(ctx.branch_counts)} branches for {os.path.basename(ctx.dsoname)}...")
     added_targets = 0
 
-    for ((from_addr, to_addr), from_sym, to_sym), count in ctx.branch_counts.items():
+    for ((from_addr, to_addr), from_sym, to_sym, from_off, to_off), count in ctx.branch_counts.items():
         sframes = getframes(ctx, from_addr)
         dframes = getframes(ctx, to_addr)
 
@@ -626,6 +626,12 @@ def add_branch_targets(ctx: BinaryContext) -> None:
         is_call = sroot.sym != droot.sym
 
         if not is_call:
+            continue
+
+        # Distinguish CALL from RET: use perf's symbol offset.
+        # A CALL lands at the function entry (offset 0 or no offset);
+        # a RET lands at a return site inside the caller (non-zero offset).
+        if to_off is not None and to_off > 0:
             continue
 
         if from_sym and sroot.sym and sroot.sym in from_sym:
@@ -1045,12 +1051,18 @@ def process_event(param_dict: dict[str, Any]) -> None:
 
         last_branch[dsoname] = br
 
-        from_sym = bsym.get("from", "").split("+")[0] if "+" in bsym.get("from", "") else None
-        to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
+        bs_from = bsym.get("from", "")
+        bs_to = bsym.get("to", "")
+        from_parts = bs_from.split("+")
+        to_parts = bs_to.split("+")
+        from_sym = from_parts[0] if from_parts[0] else None
+        to_sym = to_parts[0] if to_parts[0] else None
+        from_off = int(from_parts[1], 16) if len(from_parts) > 1 else None
+        to_off = int(to_parts[1], 16) if len(to_parts) > 1 else None
         # Subtract load offset to get file-relative addresses
         from_addr = br["from"] - ctx.load_offset
         to_addr = br["to"] - ctx.load_offset
-        ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym)] += 1
+        ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym, from_off, to_off)] += 1
 
         if sample_time:
             ctx.first_address_time.setdefault(from_addr, sample_time)
