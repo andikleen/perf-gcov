@@ -4,6 +4,8 @@
 CC=${CC:-gcc}
 PERF=${PERF:-perf}
 
+PATH=$PATH:../autofdo/build
+
 set -x
 set -e
 
