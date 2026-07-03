@@ -565,9 +565,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
             root_name = root_frame.sym
         root_source_file = os.path.basename(root_frame.file) if root_frame.file else None
 
-        addr_time = ctx.first_address_time.get(addr)
-        if addr_time and (root_name, root_source_file) not in ctx.func_timestamp:
-            ctx.func_timestamp[(root_name, root_source_file)] = addr_time
 
         names: list[str] = [root_name]
         source_files: list[str | None] = [root_source_file]
@@ -702,7 +699,26 @@ def propagate_head_counts(tree: dict[FuncKey, FuncNode]) -> None:
         node = tree.get(callee_key)
         if node is not None:
             node.head_count_value = count
+def propagate_timestamps(ctx: BinaryContext) -> None:
+    """Resolve unique LBR FROM addresses to per-function timestamps.
 
+    Iterates first_address_time (unique FROM addresses from LBR entries),
+    resolves each to a function via getframes (cache-hot after expand_ranges),
+    and records the minimum sample time per function.
+    """
+    for addr, sample_time in ctx.first_address_time.items():
+        frames = getframes(ctx, addr)
+        if frames is None:
+            continue
+        root = frames[0]
+        if not root.sym:
+            continue
+        root_name = root.sym
+        root_source_file = os.path.basename(root.file) if root.file else None
+        root_key = (root_name, root_source_file)
+        old = ctx.func_timestamp.get(root_key)
+        if old is None or sample_time < old:
+            ctx.func_timestamp[root_key] = sample_time
 def add_dwarf_zero_scaffolding(ctx: BinaryContext) -> None:
     """Add zero-count positions at function boundaries for one binary."""
 
@@ -859,6 +875,7 @@ def trace_end() -> None:
         expand_ranges(ctx)
         add_branch_targets(ctx)
         propagate_head_counts(ctx.tree)
+        propagate_timestamps(ctx)
         add_dwarf_zero_scaffolding(ctx)
         suffix.elide_tree_suffixes(ctx.tree, args.suffix_elision)
 
@@ -1037,8 +1054,6 @@ def process_event(param_dict: dict[str, Any]) -> None:
 
         if sample_time:
             ctx.first_address_time.setdefault(from_addr, sample_time)
-            ctx.first_address_time.setdefault(to_addr, sample_time)
-
         # Range between this branch's target and the previous same-binary branch's source
         if prev is not None:
             end = prev["from"] - ctx.load_offset
