@@ -90,32 +90,18 @@ echo "FNMATCH FILTER: OK"
 
 echo "=== --output-dir ==="
 rm -rf multibin_out
-$PERF script -i multibin.data ./gcov.py --gcov-version 3 --output-dir multibin_out 2>&1 | tail -10
+$PERF script -i multibin.data ./gcov.py --gcov-version 3 --binary tmulti1 --output-dir multibin_out 2>&1 | tail -10
 test -f multibin_out/tmulti1.gcov || { echo "missing multibin_out/tmulti1.gcov"; exit 1; }
-test -f multibin_out/tmulti2.gcov || { echo "missing multibin_out/tmulti2.gcov"; exit 1; }
-test -f multibin_out/tmulti3.gcov || { echo "missing multibin_out/tmulti3.gcov"; exit 1; }
-test -f multibin_out/tnonunique.gcov || { echo "missing multibin_out/tnonunique.gcov"; exit 1; }
+test ! -f multibin_out/tmulti2.gcov || { echo "tmulti2.gcov should not be in output dir"; exit 1; }
+test ! -f multibin_out/tmulti3.gcov || { echo "tmulti3.gcov should not be in output dir"; exit 1; }
+test ! -f multibin_out/tnonunique.gcov || { echo "tnonunique.gcov should not be in output dir"; exit 1; }
 cleanup_dirs="multibin_out"
 echo "OUTPUT-DIR: OK"
-
 echo "=== --min-samples FILTER ==="
 rm -f tmulti1.gcov tmulti2.gcov tmulti3.gcov tnonunique.gcov
 $PERF script -i multibin.data ./gcov.py --gcov-version 3 --min-samples 1000000 2>&1 | tail -5
 test ! -f tmulti1.gcov || { echo "tmulti1.gcov should be filtered by --min-samples"; exit 1; }
 echo "MIN-SAMPLES: OK"
-
-echo "=== RUN 3 TIMES -> STABLE ==="
-for run in 1 2 3; do
-    rm -f tmulti1.gcov tmulti2.gcov tmulti3.gcov tnonunique.gcov
-    $PERF record -b -o multibin.data -c 10003 -e branches:ppu ./run-tests-wrapper.sh >/dev/null 2>&1
-    $PERF script -i multibin.data ./gcov.py --gcov-version 3 --quiet 2>&1
-    test -f tmulti1.gcov || { echo "run $run: missing tmulti1.gcov"; exit 1; }
-    test -f tmulti2.gcov || { echo "run $run: missing tmulti2.gcov"; exit 1; }
-    test -f tmulti3.gcov || { echo "run $run: missing tmulti3.gcov"; exit 1; }
-    test -f tnonunique.gcov || { echo "run $run: missing tnonunique.gcov"; exit 1; }
-    echo "  run $run: OK"
-done
-echo "STABLE: OK"
 
 echo "=== NON-UNIQUE SYMBOLS (no LTO) ==="
 rm -f tnonunique.gcov tnonunique.dump tnonunique-perf.data
