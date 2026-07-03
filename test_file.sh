@@ -31,8 +31,8 @@ if [ ! -f "$src" ] ; then
 fi
 
 $CC -w -g -O2 -I/usr/include/csmith -o "$base" "$src"
-timeout 30 $PERF record -b -o "${base}.data" -c 10001 -e branches:ppu "./${base}" || true
-$PERF script -i "${base}.data" gcov.py "${base}.gcov" --binary "$base" --gcov-version 2
+timeout 45 $PERF record -b -o "${base}.data" -c 5001 -e branches:ppu -- sh -c "for i in 1 2 3 4 5; do \"./${base}\"; done" || true
+$PERF script -i "${base}.data" gcov.py "${base}.gcov" --binary "$base" --gcov-version 2 --min-samples 1
 ./gcov-dump.py --max-count 50000000 "${base}.gcov" > "${base}.dump"
 
 if [ -n "$(type -p create_gcov)" ] ; then
