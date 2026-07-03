@@ -14,7 +14,7 @@
 # check buildid?
 # better way to handle PIE binaries. fix libbacktrace?
 # better algorithm for range probing.
-# fallback mode using normal samples
+# fallback mode using normal samples to handle no LBR support
 
 import os
 import sys
