@@ -195,6 +195,7 @@ test_stream tdisc
 test tswitch
 test tgoto
 test tinlines
+test tinlines2
 test tindirect
 test_lto test-lto test-lto.c test-lto-2.c
 
