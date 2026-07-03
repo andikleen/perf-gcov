@@ -1018,6 +1018,7 @@ def process_event(param_dict: dict[str, Any]) -> None:
     dso_map_start = param_dict.get("dso_map_start", 0)
     map_pgoff = param_dict.get("map_pgoff", 0)
     sample_time = param_dict.get("sample", {}).get("time", 0)
+    sample_ip = param_dict.get("sample", {}).get("ip", 0)
 
     # Track the most-recently-seen branch per binary for
     # duplicate-backedge filtering and range computation.
@@ -1063,9 +1064,8 @@ def process_event(param_dict: dict[str, Any]) -> None:
         from_addr = br["from"] - ctx.load_offset
         to_addr = br["to"] - ctx.load_offset
         ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym, from_off, to_off)] += 1
-
-        if sample_time:
-            ctx.first_address_time.setdefault(from_addr, sample_time)
+        if sample_time and sample_ip:
+            ctx.first_address_time.setdefault(sample_ip - ctx.load_offset, sample_time)
         # Range between this branch's target and the previous same-binary branch's source
         if prev is not None:
             end = prev["from"] - ctx.load_offset
