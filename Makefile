@@ -19,7 +19,7 @@ ${target}: backtracemodule.o
 backtracemodule.o: backtracemodule.c
 	gcc -Wall -I.  -fPIC $(shell ${CONFIG} --includes --cflags) -I ${BACKTRACESRC} -c backtracemodule.c
 
-TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall test-lto tnonunique1 tnonunique2
+TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall test-lto tnonunique1 tnonunique2 tindirect
 
 MULTI_TESTS = tlibmain tlibmain-only tmulti1 tmulti2 tmulti3
 DIRS = multibin_out

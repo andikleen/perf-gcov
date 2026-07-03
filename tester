@@ -173,6 +173,7 @@ test_stream tdisc
 test tswitch
 test tgoto
 test tinlines
+test tindirect
 test_lto test-lto test-lto.c test-lto-2.c
 
 if [ "$1" = "random" ] ; then
