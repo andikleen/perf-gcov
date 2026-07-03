@@ -131,10 +131,7 @@ Frame = NamedTuple('Frame', [('file', str | None),
 
 class Stats:
     def __init__(self) -> None:
-        self.ignored = 0
-        self.errored = 0
         self.crossed = 0
-        self.total = 0
         self.raw_ignored_branches = 0
         self.raw_total_branches = 0
         self.output_total_positions = 0
@@ -821,9 +818,9 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
     return True
 
 def trace_end() -> None:
-    vprint("%d raw branches, %d filtered, %d errored, %d crossed" %
+    vprint("%d raw branches, %d filtered, %d crossed" %
            (stats.raw_total_branches, stats.raw_ignored_branches,
-            stats.errored, stats.crossed))
+            stats.crossed))
 
     # Filter binaries by --min-samples
     active_binaries = {dsoname: ctx for dsoname, ctx in binaries.items()
@@ -975,74 +972,53 @@ def process_event(param_dict: dict[str, Any]) -> None:
     # the load offset once per DSO (only for ET_DYN).
     dso_map_start = param_dict.get("dso_map_start", 0)
     map_pgoff = param_dict.get("map_pgoff", 0)
+    sample_time = param_dict.get("sample", {}).get("time", 0)
 
-    # Route each branch to its binary context
-    focused_by_binary: dict[str, list[tuple[BinaryContext, dict, dict]]] = {}
+    # Track the most-recently-seen branch per binary for
+    # duplicate-backedge filtering and range computation.
+    last_branch: dict[str, dict] = {}
+
     for br, bsym in zip(brstack, brstacksym):
-        stats.total += 1
         stats.raw_total_branches += 1
         if br["from_dsoname"] != br["to_dsoname"]:
             stats.crossed += 1
             stats.raw_ignored_branches += 1
             continue
+        # Cheap pre-filter: skip non-file DSOs
+        if not is_file_dso(br["from_dsoname"]):
+            stats.raw_ignored_branches += 1
+            continue
 
-        ctx = get_or_create_binary(br["from_dsoname"], dso_map_start, map_pgoff)
+        dsoname = br["from_dsoname"]
+        ctx = get_or_create_binary(dsoname, dso_map_start, map_pgoff)
         if ctx is None:
-            stats.ignored += 1
             stats.raw_ignored_branches += 1
             continue
 
         ctx.sample_count += 1
-        focused_by_binary.setdefault(ctx.dsoname, []).append((ctx, br, bsym))
 
-    sample_time = param_dict.get("sample", {}).get("time", 0)
+        # Duplicate-backedge filter: skip if this branch matches the
+        # most-recently-seen branch from the same binary
+        prev = last_branch.get(dsoname)
+        if prev is not None and prev["from"] == br["from"] and prev["to"] == br["to"]:
+            if abs(br["from"] - br["to"]) > args.strip_dup_backedge_stride_limit:
+                continue
 
-    for dsoname, branches in focused_by_binary.items():
-        ctx = binaries[dsoname]
+        last_branch[dsoname] = br
 
-        # Duplicate-top-entry filtering per binary
-        if (len(branches) >= 2 and
-                branches[0][1]["from"] == branches[1][1]["from"] and
-                branches[0][1]["to"] == branches[1][1]["to"]):
-            br0_from = branches[0][1]["from"]
-            br0_to = branches[0][1]["to"]
-            if abs(br0_from - br0_to) > args.strip_dup_backedge_stride_limit:
-                branches = branches[1:]
-
-        if len(branches) == 0:
-            continue
+        from_sym = bsym.get("from", "").split("+")[0] if "+" in bsym.get("from", "") else None
+        to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
+        # Subtract load offset to get file-relative addresses
+        from_addr = br["from"] - ctx.load_offset
+        to_addr = br["to"] - ctx.load_offset
+        ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym)] += 1
 
         if sample_time:
-            for _, br, _ in branches:
-                # Subtract load offset to get file-relative addresses
-                from_addr = br["from"] - ctx.load_offset
-                to_addr = br["to"] - ctx.load_offset
-                ctx.first_address_time.setdefault(from_addr, sample_time)
-                ctx.first_address_time.setdefault(to_addr, sample_time)
+            ctx.first_address_time.setdefault(from_addr, sample_time)
+            ctx.first_address_time.setdefault(to_addr, sample_time)
 
-        for _, br, bsym in branches:
-            from_sym = bsym.get("from", "").split("+")[0] if "+" in bsym.get("from", "") else None
-            to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
-            # Subtract load offset to get file-relative addresses
-            from_addr = br["from"] - ctx.load_offset
-            to_addr = br["to"] - ctx.load_offset
-            ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym)] += 1
-
-        if len(branches) < 2:
-            continue
-
-        for i in range(1, len(branches)):
-            _, br, bsym = branches[i]
-            _, prev_br, _ = branches[i - 1]
-
-            # Subtract load offset to get file-relative addresses
-            begin = br["to"] - ctx.load_offset
-            end = prev_br["from"] - ctx.load_offset
-
-            if end < begin:
-                continue
-            if end - begin > args.insn_range_max:
-                continue
-
-            to_sym = bsym.get("to", "").split("+")[0] if "+" in bsym.get("to", "") else None
-            ctx.range_counts[((begin, end), to_sym)] += 1
+        # Range between this branch's target and the previous same-binary branch's source
+        if prev is not None:
+            end = prev["from"] - ctx.load_offset
+            if end >= to_addr and end - to_addr <= args.insn_range_max:
+                ctx.range_counts[((to_addr, end), to_sym)] += 1
