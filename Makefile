@@ -33,6 +33,7 @@ clean:
 		$(addsuffix .gcov3,$(TESTS) $(MULTI_TESTS) libtlib.so ld-linux-x86-64.so.2 libc.so.6) \
 		$(addsuffix .opt,$(TESTS) $(MULTI_TESTS)) \
 		$(addsuffix .opt3,$(TESTS) $(MULTI_TESTS)) \
+		$(addsuffix .optafdo,$(TESTS) $(MULTI_TESTS)) \
 		$(addsuffix .offsets,$(TESTS)) \
 		$(addsuffix .offsets2,$(TESTS)) \
 		$(addsuffix .dump,$(TESTS) $(MULTI_TESTS) libtlib.so) \
@@ -42,7 +43,7 @@ clean:
 		$(TESTS) $(MULTI_TESTS) \
 		libtlib.so run-tests-wrapper.sh \
 		tcall.d1 tcall.d2 tcall.1.* tcall.2.* tcall.id.* tcall.two.* \
-		tcall.copy.* tcall.mix tcall.thr tcall.bad tcall.two.opt perf.data
+		tcall.copy.* tcall.mix tcall.thr tcall.bad tcall.two.opt *ref-*.afdo *new-*.afdo perf.data
 	rm -rf $(DIRS)
 
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \

@@ -32,7 +32,7 @@ fi
 
 cleanup_test_files() {
 	local i=$1
-	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.dump3v ${i}.dump3v2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2 ${i}.gcov3_ref ${i}.stream.gcov
+	rm -f ${i}.gcov3 ${i}.dump3 ${i}.opt3 ${i}.dump ${i}.dump2 ${i}.dump3v ${i}.dump3v2 ${i}.offsets ${i}.offsets2 ${i}.offsets.missing ${i}.gcov2 ${i}.gcov3_ref ${i}.stream.gcov ${i}.optafdo ${i}ref-${i}.c.*.afdo ${i}new-${i}.c.*.afdo
 }
 
 # Compare gcov.py output with create_gcov reference.
@@ -126,8 +126,21 @@ if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
 fi
 if [ $GCC_GCOV_VERSION == 2 ] ; then
-	$CC -g -O2 -flto -fauto-profile=${i}.gcov ${sources} -o ${i}.opt
+	if [ -n "$(type -p create_gcov)" ] ; then
+		$CC -dumpbase ${i}ref -w -g -O2 -flto -fdump-unnumbered -fdump-ipa-afdo -fauto-profile=${i}.gcov ${sources} -o ${i}.optafdo
+	fi
+	$CC -dumpbase ${i}new -w -g -O2 -flto -fdump-unnumbered -fdump-ipa-afdo -fauto-profile=${i}.gcov ${sources} -o ${i}.opt
 	./${i}.opt
+	if [ -f ${i}.optafdo ] ; then
+		for ref_file in ${i}ref-*.afdo; do
+			[ -f "$ref_file" ] || continue
+			new_file="${ref_file/ref-/new-}"
+			if [ -f "$new_file" ]; then
+				diff -u "$ref_file" "$new_file"
+			fi
+		done
+		cmp ${i}.opt ${i}.optafdo
+	fi
 fi
 
 # Test v3
@@ -163,8 +176,15 @@ if [ -n "$(type -p dump_gcov)" ] ; then
 	diff_check ${i}
 fi
 if [ $GCC_GCOV_VERSION == 2 ] ; then
-	$CC -g -O2 -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
+	if [ -n "$(type -p create_gcov)" ] ; then
+		$CC -dumpbase ${i}ref -w -g -O2 -fdump-unnumbered -fdump-ipa-afdo -fauto-profile=${i}.gcov ${i}.c -o ${i}.optafdo
+	fi
+	$CC -dumpbase ${i}new -w -g -O2 -fdump-unnumbered -fdump-ipa-afdo -fauto-profile=${i}.gcov ${i}.c -o ${i}.opt
 	./${i}.opt
+	if [ -f ${i}.optafdo ] ; then
+		diff -u ${i}ref-${i}.c.*.afdo ${i}new-${i}.c.*.afdo
+		cmp ${i}.opt ${i}.optafdo
+	fi
 fi
 
 # Test v3 (new format with source files)

@@ -42,9 +42,14 @@ if [ -n "$(type -p create_gcov)" ] ; then
 	    echo "Some differences"
 	    # accepted for now
     fi
+    $CC -dumpbase ${base}ref -w -g -O2 -fdump-unnumbered -fdump-ipa-afdo -fauto-profile="${base}.gcov" "$src" -o "${base}.optafdo"
 fi
 
-$CC -w -g -O2 -fauto-profile="${base}.gcov" "$src" -o "${base}.opt"
+$CC -dumpbase ${base}new -w -g -O2 -fdump-ipa-afdo -fdump-unnumbered -fauto-profile="${base}.gcov" "$src" -o "${base}.opt"
+if [ -n "$(type -p create_gcov)" ] ; then
+	diff -u ${base}ref-${base}.c.*.afdo ${base}new-${base}.c.*.afdo
+	cmp ${base}.opt ${base}.optafdo
+fi
 timeout 30 "./${base}.opt"
 rm -f "${base}.dump" "${base}.dump2"
 
