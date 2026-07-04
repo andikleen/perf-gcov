@@ -203,12 +203,34 @@ def is_position_independent(dsoname: str) -> bool:
     return e_type == 3  # ET_DYN
 
 def should_process_binary(dsoname: str) -> bool:
-    """Check if binary matches --binary patterns."""
+    """Check if binary matches --binary patterns.
+
+    Matches the DSO against user-provided patterns using three strategies
+    (any match suffices):
+      1. fnmatch full DSO path against the raw pattern
+      2. fnmatch DSO basename against the raw pattern
+      3. fnmatch DSO basename against the pattern's basename
+
+    Strategy 3 handles the case where the binary was built in a different
+    directory than where it was deployed/perf'd. This mirrors autofdo's
+    approach of extracting the basename and matching against DSO basenames.
+
+    """
     if not args.binary:
         return True
-    basename = os.path.basename(dsoname)
-    return any(fnmatch.fnmatch(dsoname, pat) or fnmatch.fnmatch(basename, pat)
-               for pat in args.binary)
+    dso_basename = os.path.basename(dsoname)
+    for pat in args.binary:
+        # Strategy 1: full path match
+        if fnmatch.fnmatch(dsoname, pat):
+            return True
+        # Strategy 2: DSO basename against full pattern
+        if fnmatch.fnmatch(dso_basename, pat):
+            return True
+        # Strategy 3: DSO basename against pattern's basename (autofdo-style)
+        pat_basename = os.path.basename(pat)
+        if pat_basename and fnmatch.fnmatch(dso_basename, pat_basename):
+            return True
+    return False
 
 def get_or_create_binary(dsoname: str, dso_map_start: int = 0, map_pgoff: int = 0) -> BinaryContext | None:
     """Get or create BinaryContext for a DSO."""
