@@ -61,7 +61,7 @@ ap.add_argument('--gcov-version', '-gcov_version', type=int, choices=[2, 3], def
 ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
                 help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
 ap.add_argument('--insn-range-max', type=int, default=1 << 20, help="Max range between branches to probe")
-ap.add_argument('--insn-range-stride', type=int, default=1, help="Stride to probe for")
+ap.add_argument('--insn-range-stride', type=int, default=0, help="Stride to probe for (0=auto based on profile size)")
 ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
                 help="Symbol suffix elision policy (default: %(default)s)")
 ap.add_argument('--min-samples', type=int, default=100,
@@ -897,7 +897,24 @@ def trace_end() -> None:
     # Process each binary
     for dsoname, ctx in active_binaries.items():
         basename = os.path.basename(dsoname)
-        vprint(f"\nProcessing {basename} ({ctx.sample_count} samples)...")
+
+        # Auto-tune insn-range-stride: if not user-specified, scale stride
+        # to keep the number of probed addresses manageable (~100K max).
+        if args.insn_range_stride == 0:
+            total_span = sum(end - begin + 1 for ((begin, end), _), _ in ctx.range_counts.items())
+            # Target ~100K address lookups max; scale stride to match
+            auto_stride = max(1, total_span // 100000)
+            # Round up to next power of 2 for nice stride values
+            if auto_stride > 1:
+                auto_stride = 1 << auto_stride.bit_length()
+            auto_stride = min(auto_stride, 256)
+            if auto_stride != 1:
+                vprint(f"  {basename}: auto stride={auto_stride} (total_span={total_span})")
+        else:
+            auto_stride = args.insn_range_stride
+        args.insn_range_stride = auto_stride
+
+        vprint(f"\nProcessing {basename} ({ctx.sample_count} samples, stride={auto_stride})...")
         expand_ranges(ctx)
         add_branch_targets(ctx)
         propagate_head_counts(ctx.tree)
