@@ -206,8 +206,9 @@ def is_position_independent(dsoname: str) -> bool:
         return False
     return e_type == 3  # ET_DYN
 
+_should_process_cache: dict[str, bool] = {}
 def should_process_binary(dsoname: str) -> bool:
-    """Check if binary matches --binary patterns.
+    """Check if binary matches --binary patterns. Results cached per dsoname.
 
     Matches the DSO against user-provided patterns using three strategies
     (any match suffices):
@@ -219,21 +220,31 @@ def should_process_binary(dsoname: str) -> bool:
     directory than where it was deployed/profiled.
 
     """
+    try:
+        return _should_process_cache[dsoname]
+    except KeyError:
+        pass
     if not args.binary:
-        return True
-    dso_basename = os.path.basename(dsoname)
-    for pat in args.binary:
-        # Strategy 1: full path match
-        if fnmatch.fnmatch(dsoname, pat):
-            return True
-        # Strategy 2: DSO basename against full pattern
-        if fnmatch.fnmatch(dso_basename, pat):
-            return True
-        # Strategy 3: DSO basename against pattern's basename
-        pat_basename = os.path.basename(pat)
-        if pat_basename and fnmatch.fnmatch(dso_basename, pat_basename):
-            return True
-    return False
+        result = True
+    else:
+        dso_basename = os.path.basename(dsoname)
+        result = False
+        for pat in args.binary:
+            # Strategy 1: full path match
+            if fnmatch.fnmatch(dsoname, pat):
+                result = True
+                break
+            # Strategy 2: DSO basename against full pattern
+            if fnmatch.fnmatch(dso_basename, pat):
+                result = True
+                break
+            # Strategy 3: DSO basename against pattern's basename
+            pat_basename = os.path.basename(pat)
+            if pat_basename and fnmatch.fnmatch(dso_basename, pat_basename):
+                result = True
+                break
+    _should_process_cache[dsoname] = result
+    return result
 
 def get_or_create_binary(dsoname: str, dso_map_start: int = 0, map_pgoff: int = 0) -> BinaryContext | None:
     """Get or create BinaryContext for a DSO."""
@@ -578,13 +589,14 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
     address_count: dict[int, int] = defaultdict(int)
     address_sym: dict[int, str | None] = {}
+    addr_frames: dict[int, list[Frame]] = {}
 
     for ((begin, end), range_sym), range_count in ctx.range_counts.items():
         for addr in range(begin, end + 1, args.insn_range_stride):
             frames = getframes(ctx, addr)
             if frames is None:
                 continue
-
+            addr_frames[addr] = frames
             address_count[addr] += range_count
             if addr not in address_sym:
                 address_sym[addr] = range_sym
@@ -593,7 +605,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
     position_source_files: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
 
     for addr, addr_count in address_count.items():
-        frames = getframes(ctx, addr)
+        frames = addr_frames[addr]
         if frames is None:
             continue
 
@@ -1101,12 +1113,12 @@ def process_event(param_dict: dict[str, Any]) -> None:
             stats.crossed += 1
             stats.raw_ignored_branches += 1
             continue
-        # Cheap pre-filter: skip non-file DSOs
-        if not is_file_dso(br["from_dsoname"]):
+        # Cheap pre-filter: skip non-file DSOs (kernel, vdso, etc.)
+        dsoname = br["from_dsoname"]
+        if dsoname.startswith('[') or '/' not in dsoname:
             stats.raw_ignored_branches += 1
             continue
 
-        dsoname = br["from_dsoname"]
         ctx = get_or_create_binary(dsoname, dso_map_start, map_pgoff)
         if ctx is None:
             stats.raw_ignored_branches += 1
@@ -1125,21 +1137,27 @@ def process_event(param_dict: dict[str, Any]) -> None:
 
         bs_from = bsym.get("from", "")
         bs_to = bsym.get("to", "")
+        # Parse symbol[+0xOFFSET]. Use try/except instead of len() check to
+        # avoid 38M len() calls in the hot loop.
         from_parts = bs_from.rsplit("+", 1)
         to_parts = bs_to.rsplit("+", 1)
         from_sym = from_parts[0] if from_parts[0] else None
         to_sym = to_parts[0] if to_parts[0] else None
-        # handle the case of no offset, but symbol contains a + (e.g. from templates)
         try:
-            from_off = int(from_parts[1], 16) if len(from_parts) > 1 else None
+            from_off = int(from_parts[1], 16)
+        except IndexError:
+            from_off = None
         except ValueError:
             from_off = None
             continue
         try:
-            to_off = int(to_parts[1], 16) if len(to_parts) > 1 else None
+            to_off = int(to_parts[1], 16)
+        except IndexError:
+            to_off = None
         except ValueError:
             to_off = None
             continue
+
         # Subtract load offset to get file-relative addresses
         from_addr = br["from"] - ctx.load_offset
         to_addr = br["to"] - ctx.load_offset
