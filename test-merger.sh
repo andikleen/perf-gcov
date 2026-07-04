@@ -6,6 +6,16 @@ PERF=${PERF:-perf}
 MERGER=./profile-merger.py
 DUMPER=./gcov-dump.py
 
+# Find a GCC 16+ capable compiler for v3 format tests.
+# Set CC_V3 environment variable to override auto-detection.
+if [ -n "$CC_V3" ]; then
+	:  # user-provided
+elif command -v gcc-16 >/dev/null 2>&1; then
+	CC_V3=gcc-16
+else
+	CC_V3=$CC
+fi
+
 set -x
 set -e
 
@@ -13,15 +23,8 @@ failed() {
 	echo "FAILED"
 }
 trap failed ERR 0
-
-cleanup_merge() {
-	rm -f ${cleanup_files}
-}
-trap cleanup_merge EXIT
-
-# Check GCC version for v3 support
 check_gcc_v3_support() {
-	local version=$($CC -dumpversion | cut -d. -f1)
+	local version=$($CC_V3 -dumpversion | cut -d. -f1)
 	if [ "$version" -ge 16 ]; then
 		return 0
 	else
@@ -159,7 +162,7 @@ cleanup_files="${cleanup_files} ${i}.two.opt"
 
 if check_gcc_v3_support ; then
 	echo "=== E2E v3 ==="
-	$CC -g -O2 -fauto-profile=${i}.two.3 ${i}.c -o ${i}.two.opt3
+	$CC_V3 -g -O2 -fauto-profile=${i}.two.3 ${i}.c -o ${i}.two.opt3
 	./${i}.two.opt3
 	echo "E2E V3: OK"
 	cleanup_files="${cleanup_files} ${i}.two.opt3"
