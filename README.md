@@ -109,8 +109,8 @@ If needing to run on a older python version strip-types.py can be used to strip 
 - Much less mature.
 - Not a nightmare to build (I hope)
 - Much simpler (but only focussed on the gcc job)
-- Much less memory use for long profiling runs because the samples are not completely
-loaded into memory.
+- About half memory usage of create\_gcov (samples are not all loaded into memory), but
+currently about 4x worse run time (unless parallelized)
 - Supports streaming mode to not save individual samples to disk.
 - Supports online mode for automatic background profiling
 - Supports wrappers to inject profile feedback into existing build systems with minimal changes.
