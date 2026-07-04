@@ -62,7 +62,8 @@ The program must be compiled with -O2+ and debug information (-g).
 ```
 gcc -g -O2 -o workload ...
 # can also use gcc-auto-profile if installed
-perf record -b -c 100003 -e branches:upp workload
+# if perf doesn't support event use branches:ppu
+perf record -b -c 100003 -e br_inst_retired.near_taken:upp workload
 gcov.py --binary workload file.gcov
 gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 ```

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Generate gcc gcov profile files from perf record -b
 # gcc -O2 -o workload ...
-# perf record -b -c 100003 -e branches:upp workload
+# perf record -b -c 100003 -e br_inst_retired.near_taken:upp workload
 # gcov.py --binary workload file.gcov
 # gcc -fauto-profile=file.gcov -o workload.opt -O2 ...
 #

@@ -25,8 +25,8 @@ Options:
   --gcov <path>         Output .gcov file path (default: <binary-name>.gcov)
 
 Wrapper options (handled by this script):
-  --event <event>       Perf event specification (default: branches:ppu)
-                        Examples: branches:u, branches:k, branches:upp
+  --event <event>       Perf event specification (default: br_inst_retired.near_taken:upp)
+			Use branches:ppu if perf errors out
   --count <N>           Sample period (default: auto)
 
 All other --options are forwarded to gcov.py. Common options:
@@ -63,7 +63,7 @@ EOF
 }
 
 # Defaults
-EVENT="branches:ppu"
+EVENT="br_inst_retired.near_taken:ppu"
 COUNT=""
 BINARY=""
 GCOV=""
