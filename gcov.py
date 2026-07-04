@@ -28,7 +28,7 @@ import itertools
 import subprocess
 import pathlib
 
-FRAME_CACHE_MAXSIZE = 65536
+FRAME_CACHE_MAXSIZE = 4096
 MAX_AUTO_STRIDE = 16
 MAX_LINE_WARN = 10
 
