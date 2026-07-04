@@ -266,7 +266,9 @@ class FuncNode:
     Inlined callees are stored as child nodes keyed by the call offset in
     this function and the callee name, mirroring gcc's nested
     GCOV_TAG_AFDO_FUNCTION layout"""
-    __slots__ = ("name", "source_file", "positions", "targets", "children", "structural_zeros", "head_count_value")
+    __slots__ = ("name", "source_file", "positions", "targets", "children",
+                 "structural_zeros", "head_count_value",
+                 "_has_output_cache", "_emitted_children_cache")
 
     def __init__(self, name: str, source_file: str | None = None):
         self.name = name
@@ -283,6 +285,11 @@ class FuncNode:
         # it is not directly persisted to the GCOV file format.
         self.structural_zeros: set[int] = set()
         self.head_count_value: int = 0
+        # Cached results of has_output() and emitted_children() — valid only
+        # after tree construction is complete (i.e., during gcov file writing).
+        # Set to None to indicate "not yet computed".
+        self._has_output_cache: bool | None = None
+        self._emitted_children_cache: list[tuple[int, str, "FuncNode"]] | None = None
 
     def child(self, offset: int, name: str, source_file: str | None = None) -> "FuncNode":
         key = (offset, name, source_file)
@@ -291,14 +298,16 @@ class FuncNode:
             node = FuncNode(name, source_file)
             self.children[key] = node
         return node
-
     def head_count(self) -> int:
         return self.head_count_value
 
     def has_output(self) -> bool:
-        if filtered_positions(self):
-            return True
-        return any(child.has_output() for child in self.children.values())
+        if self._has_output_cache is not None:
+            return self._has_output_cache
+        result = bool(filtered_positions(self)) or any(
+            child.has_output() for child in self.children.values())
+        self._has_output_cache = result
+        return result
 
 def add_path(root: FuncNode, path: list[tuple[str, int]], offset: int,
              count: int, target: FuncKey | None,
@@ -333,9 +342,23 @@ def filtered_positions(node: FuncNode) -> list[tuple[int, int, Counter[FuncKey]]
     return positions
 
 def emitted_children(node: FuncNode) -> list[tuple[int, str, FuncNode]]:
-    return [(coff, cname, child)
-            for (coff, cname, csrc), child in sorted(node.children.items())
-            if child.has_output()]
+    if node._emitted_children_cache is not None:
+        return node._emitted_children_cache
+    result = [(coff, cname, child)
+              for (coff, cname, csrc), child in sorted(node.children.items())
+              if child.has_output()]
+    node._emitted_children_cache = result
+    return result
+
+def _invalidate_caches(tree: dict[FuncKey, FuncNode]) -> None:
+    """Reset per-node caches after tree modifications."""
+    def walk(node: FuncNode) -> None:
+        node._has_output_cache = None
+        node._emitted_children_cache = None
+        for child in node.children.values():
+            walk(child)
+    for node in tree.values():
+        walk(node)
 
 def wfunc_node(f: BinaryIO, node: FuncNode, offset: int,
                entry_index: dict[FuncKey, int],
@@ -920,6 +943,7 @@ def trace_end() -> None:
         propagate_head_counts(ctx.tree)
         propagate_timestamps(ctx)
         add_dwarf_zero_scaffolding(ctx)
+        _invalidate_caches(ctx.tree)
         suffix.elide_tree_suffixes(ctx.tree, args.suffix_elision)
 
     # Determine output filenames.
