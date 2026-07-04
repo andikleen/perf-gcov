@@ -165,7 +165,7 @@ class BinaryContext:
         self.sample_count = 0
         # Whether we have printed per-binary warnings (to avoid spamming)
         self.warned_no_debug: bool = False
-        self.warned_neg_line: bool = False
+        self.warned_neg_line: int = 0
 
     def root(self, name: str, source_file: str | None = None) -> "FuncNode":
         key = (name, source_file)
@@ -1026,14 +1026,18 @@ def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
     if line < 0:
         # Negative offsets indicate DWARF inconsistency (line before declaration)
         # This can happen with inlined code or compiler-generated code
-        if args.verbose:
+        if args.verbose and ctx.warned_neg_line < 10:
             print(f"WARNING: Negative line offset clamped to 0: "
                   f"function={fr.sym}, line={fr.line}, base={base}",
                   file=sys.stderr)
+            ctx.warned_neg_line += 1
+            if ctx.warned_neg_line == 10:
+                print("WARNING: (further negative offsets suppressed)",
+                      file=sys.stderr)
         elif not ctx.warned_neg_line and not args.quiet:
             print("WARNING: Negative line offset clamped to 0 (use --verbose for details)",
                   file=sys.stderr)
-            ctx.warned_neg_line = True
+            ctx.warned_neg_line = 1
         line = 0
     return gen_offset(line, fr.disc)
 
