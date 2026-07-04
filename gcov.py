@@ -29,6 +29,7 @@ import subprocess
 import pathlib
 
 FRAME_CACHE_MAXSIZE = 65536
+MAX_AUTO_STRIDE = 16
 
 # Add script directory to PYTHONPATH to find backtrace module when run from elsewhere
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -924,7 +925,7 @@ def trace_end() -> None:
         basename = os.path.basename(dsoname)
 
         # Auto-tune insn-range-stride: if not user-specified, scale stride
-        # to keep the number of probed addresses manageable (~100K max).
+        # to keep the number of probed addresses manageable
         if args.insn_range_stride == 0:
             total_span = sum(end - begin + 1 for ((begin, end), _), _ in ctx.range_counts.items())
             # Target ~100K address lookups max; scale stride to match
@@ -932,7 +933,7 @@ def trace_end() -> None:
             # Round up to next power of 2 for nice stride values
             if auto_stride > 1:
                 auto_stride = 1 << auto_stride.bit_length()
-            auto_stride = min(auto_stride, 256)
+            auto_stride = min(auto_stride, MAX_AUTO_STRIDE)
             if auto_stride != 1:
                 vprint(f"  {basename}: auto stride={auto_stride} (total_span={total_span})")
         else:
