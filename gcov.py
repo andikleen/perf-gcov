@@ -30,6 +30,7 @@ import pathlib
 
 FRAME_CACHE_MAXSIZE = 65536
 MAX_AUTO_STRIDE = 16
+MAX_LINE_WARN = 10
 
 # Add script directory to PYTHONPATH to find backtrace module when run from elsewhere
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1049,7 +1050,7 @@ def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
     if line < 0:
         # Negative offsets indicate DWARF inconsistency (line before declaration)
         # This can happen with inlined code or compiler-generated code
-        if args.verbose and ctx.warned_neg_line < 10:
+        if args.verbose and ctx.warned_neg_line < MAX_LINE_WARN:
             print(f"WARNING: Negative line offset clamped to 0: "
                   f"function={fr.sym}, line={fr.line}, base={base}",
                   file=sys.stderr)
