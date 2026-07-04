@@ -589,14 +589,12 @@ def expand_ranges(ctx: BinaryContext) -> None:
 
     address_count: dict[int, int] = defaultdict(int)
     address_sym: dict[int, str | None] = {}
-    addr_frames: dict[int, list[Frame]] = {}
 
     for ((begin, end), range_sym), range_count in ctx.range_counts.items():
         for addr in range(begin, end + 1, args.insn_range_stride):
             frames = getframes(ctx, addr)
             if frames is None:
                 continue
-            addr_frames[addr] = frames
             address_count[addr] += range_count
             if addr not in address_sym:
                 address_sym[addr] = range_sym
@@ -605,7 +603,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
     position_source_files: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
 
     for addr, addr_count in address_count.items():
-        frames = addr_frames[addr]
+        frames = getframes(ctx, addr)
         if frames is None:
             continue
 
