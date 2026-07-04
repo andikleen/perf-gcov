@@ -828,7 +828,9 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
     update_branch_counts(ctx)
     # Write to a temp file first, then atomically rename to output_path.
     # This prevents partial/corrupt files if the process is interrupted.
-    tmp_path = output_path + ".tmp"
+    # For character devices (e.g., /dev/null) write directly — no rename.
+    direct = os.path.exists(output_path) and not os.path.isfile(output_path)
+    tmp_path = output_path if direct else output_path + ".tmp"
     try:
         with open(tmp_path, "wb") as f:
             w32(f, GCOV_DATA_MAGIC)
@@ -884,7 +886,7 @@ def write_gcov_file(ctx: BinaryContext, output_path: str) -> bool:
                 for key in sorted(ctx.tree, key=lambda k: (k[0], k[1] or "")):
                     wfunc_node(f, ctx.tree[key], 0, entry_index, True, ctx)
 
-                if not pathlib.Path(f.name).is_fifo():
+                if os.path.isfile(f.name):
                     endoff = f.tell()
                     f.seek(lenoff, 0)
                     vprint("Data length %d" % (endoff - lenoff))
