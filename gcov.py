@@ -1144,18 +1144,14 @@ def process_event(param_dict: dict[str, Any]) -> None:
         to_sym = to_parts[0] if to_parts[0] else None
         try:
             from_off = int(from_parts[1], 16)
-        except IndexError:
+        except (IndexError, ValueError):
             from_off = None
-        except ValueError:
-            from_off = None
-            continue
+            from_sym = bs_from
         try:
             to_off = int(to_parts[1], 16)
-        except IndexError:
+        except (IndexError, ValueError):
             to_off = None
-        except ValueError:
-            to_off = None
-            continue
+            to_sym = bs_to
 
         # Subtract load offset to get file-relative addresses
         from_addr = br["from"] - ctx.load_offset
