@@ -299,6 +299,7 @@ class FuncNode:
             node = FuncNode(name, source_file)
             self.children[key] = node
         return node
+
     def head_count(self) -> int:
         return self.head_count_value
 
