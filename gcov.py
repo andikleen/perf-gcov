@@ -1129,12 +1129,17 @@ def process_event(param_dict: dict[str, Any]) -> None:
         to_parts = bs_to.rsplit("+", 1)
         from_sym = from_parts[0] if from_parts[0] else None
         to_sym = to_parts[0] if to_parts[0] else None
+        # handle the case of no offset, but symbol contains a + (e.g. from templates)
         try:
             from_off = int(from_parts[1], 16) if len(from_parts) > 1 else None
+        except ValueError:
+            from_off = None
+            continue
+        try:
             to_off = int(to_parts[1], 16) if len(to_parts) > 1 else None
         except ValueError:
-            print("parse error", bs_from, bs_to)
-            return
+            to_off = None
+            continue
         # Subtract load offset to get file-relative addresses
         from_addr = br["from"] - ctx.load_offset
         to_addr = br["to"] - ctx.load_offset
