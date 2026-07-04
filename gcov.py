@@ -213,8 +213,7 @@ def should_process_binary(dsoname: str) -> bool:
       3. fnmatch DSO basename against the pattern's basename
 
     Strategy 3 handles the case where the binary was built in a different
-    directory than where it was deployed/perf'd. This mirrors autofdo's
-    approach of extracting the basename and matching against DSO basenames.
+    directory than where it was deployed/profiled.
 
     """
     if not args.binary:
@@ -227,7 +226,7 @@ def should_process_binary(dsoname: str) -> bool:
         # Strategy 2: DSO basename against full pattern
         if fnmatch.fnmatch(dso_basename, pat):
             return True
-        # Strategy 3: DSO basename against pattern's basename (autofdo-style)
+        # Strategy 3: DSO basename against pattern's basename
         pat_basename = os.path.basename(pat)
         if pat_basename and fnmatch.fnmatch(dso_basename, pat_basename):
             return True
@@ -563,8 +562,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
     """Expand range_counts into position counts in the profile tree for one binary.
 
     Overlapping ranges SUM per address, then addresses mapping to the same
-    source (line,disc) take MAX. Matches autofdo: profile.cc:173 (SUM),
-    symbol_map.cc:572-573 (MAX)."""
+    source (line,disc) take MAX."""
 
     vprint(f"Expanding {len(ctx.range_counts)} ranges for {os.path.basename(ctx.dsoname)}...")
 
@@ -573,7 +571,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
         for (begin, end), sym in ctx.range_counts.keys():
             count = ctx.range_counts[((begin, end), sym)]
             print(f"  [{begin:x}-{end:x}] ({sym}): count={count}")
-
 
     address_count: dict[int, int] = defaultdict(int)
     address_sym: dict[int, str | None] = {}
@@ -587,7 +584,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
             address_count[addr] += range_count
             if addr not in address_sym:
                 address_sym[addr] = range_sym
-
 
     position_max_counts: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], int] = {}
     position_source_files: dict[tuple[str, str | None, tuple[tuple[str, int], ...], int], tuple[str | None, list[str | None]]] = {}
