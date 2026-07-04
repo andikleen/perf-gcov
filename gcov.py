@@ -1074,8 +1074,8 @@ def process_event(param_dict: dict[str, Any]) -> None:
 
         bs_from = bsym.get("from", "")
         bs_to = bsym.get("to", "")
-        from_parts = bs_from.rsplit("+", 2)
-        to_parts = bs_to.rsplit("+", 2)
+        from_parts = bs_from.rsplit("+", 1)
+        to_parts = bs_to.rsplit("+", 1)
         from_sym = from_parts[0] if from_parts[0] else None
         to_sym = to_parts[0] if to_parts[0] else None
         try:
