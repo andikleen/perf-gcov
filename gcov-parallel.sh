@@ -26,8 +26,10 @@ Wrapper options:
   -i, --profile <file>   Input perf data file (default: perf.data)
   --gcov <file>          Output gcov file (default: auto-detected from binary name)
   --min-mb-per-job <N>   Minimum MB per job when auto-detecting job count.
-                         Lower = more parallel jobs (default: 10).
-                         Ignored when --jobs is explicitly set.
+                          Lower = more parallel jobs (default: 10).
+                          Ignored when --jobs is explicitly set.
+  --show                   Show individual gcov.py worker output.
+                           By default, worker output is suppressed.
 
 All other --options are forwarded to gcov.py. Common options:
   --binary <pattern>   Binary to profile (fnmatch pattern, repeatable)
@@ -76,6 +78,7 @@ JOBS_EXPLICIT=false
 MIN_MB_PER_JOB=10
 PROFILE=""
 GCOV=""
+SHOW=false
 FORWARD_OPTS=()
 
 # Parse arguments
@@ -92,15 +95,19 @@ while [[ $# -gt 0 ]]; do
       MIN_MB_PER_JOB="$2"
       shift 2
       ;;
-    --profile|-i)
+    --profile|-i|-profile)
       require_arg "$@"
       PROFILE="$2"
       shift 2
       ;;
-    --gcov)
+    --gcov|-gcov)
       require_arg "$@"
       GCOV="$2"
       shift 2
+      ;;
+    --show)
+      SHOW=true
+      shift
       ;;
     --help|-h)
       usage
@@ -189,7 +196,7 @@ _i=0
 while [[ $_i -lt ${#FORWARD_OPTS[@]} ]]; do
   opt="${FORWARD_OPTS[$_i]}"
   _i=$((_i + 1))
-  if [[ $opt == "--gcov-version" || $opt == "--gcov_version" ]]; then
+  if [[ $opt == "--gcov-version" || $opt == "--gcov_version" || $opt == "-gcov-version" || $opt == "-gcov_version" ]]; then
     MERGE_GCOV_VERSION="${FORWARD_OPTS[$_i]:-}"
     _i=$((_i + 1))
   elif [[ $opt == "--threshold" || $opt == "--threshold"* ]]; then
@@ -224,8 +231,10 @@ for ((i = 1; i <= JOBS; i++)); do
     TIME_SPEC="${PCT}%/$i"
   fi
   TEMP_FILE="${TEMP_PREFIX}$((i - 1)).gcov.tmp"
+  GCOV_ARGS=(--gcov "$TEMP_FILE")
+  [[ "$SHOW" == false ]] && GCOV_ARGS+=(--quiet)
   perf script -i "$PROFILE" --time "$TIME_SPEC" \
-    "$GCOV_PY" --gcov "$TEMP_FILE" "${FORWARD_OPTS[@]}" &
+    "$GCOV_PY" "${GCOV_ARGS[@]}" "${FORWARD_OPTS[@]}" &
   PIDS+=($!)
 done
 

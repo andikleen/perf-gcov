@@ -73,19 +73,19 @@ WORKLOAD=()
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --binary)
+    --binary|-binary)
       BINARY="$2"
       shift 2
       ;;
-    --gcov)
+    --gcov|-gcov)
       GCOV="$2"
       shift 2
       ;;
-    --event)
+    --event|-event)
       EVENT="$2"
       shift 2
       ;;
-    --count)
+    --count|-count)
       COUNT="$2"
       shift 2
       ;;
