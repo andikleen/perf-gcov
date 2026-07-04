@@ -327,7 +327,8 @@ def gen_strtable_v3(
     file_table = sorted(source_files)
     file_index = {fname: i for i, fname in enumerate(file_table)}
 
-    entries: list[tuple[str, int]] = []
+    # Index 0 must be empty (reserved by GCC).
+    entries: list[tuple[str, int]] = [("", -1)]
     entry_index: dict[FuncKey, int] = {}
     for key in sorted(tree, key=lambda k: (k[0], k[1] or "")):
         name, src_file = key

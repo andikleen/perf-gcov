@@ -453,7 +453,8 @@ def gen_strtable_v3(
     file_index = {fname: i for i, fname in enumerate(file_table)}
 
     # Build ordered entry list (allows duplicate names with different files)
-    entries: list[tuple[str, int]] = []
+    # Index 0 must be empty (reserved by GCC).
+    entries: list[tuple[str, int]] = [("", -1)]
     entry_index: dict[FuncKey, int] = {}
     for key in sorted(ctx.tree, key=lambda k: (k[0], k[1] or "")):
         name, src_file = key
