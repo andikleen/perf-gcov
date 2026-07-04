@@ -56,7 +56,9 @@ ap.add_argument('--profile', '-i', '-profile',
 ap.add_argument('--gcov', '-gcov', help="gcov output file")
 ap.add_argument('--profiler', '-profiler',
                 help="set profiler type (nop)", choices=["perf"])
-ap.add_argument('--threshold', default=10, type=int, help="Min number of samples for location to output")
+ap.add_argument('--threshold', default=0, type=int, help="Min number of samples for location to output (default: 0 = emit all discovered positions)")
+ap.add_argument('--dense', action='store_true',
+                help="Dense address probing (stride=1). Implies --threshold 0.")
 ap.add_argument('--verbose', action='store_true', help="Be more verbose")
 ap.add_argument('--gcov-version', '-gcov_version', type=int, choices=[2, 3], default=3,
                 help="GCOV version: 2 (upto gcc 15) or 3 (gcc 16+, default)")
@@ -917,14 +919,17 @@ def trace_end() -> None:
     if len(active_binaries) == 0:
         print("No binaries with sufficient samples", file=sys.stderr)
         return
-
     # Process each binary
+    if args.dense:
+        args.threshold = 0
+        vprint("Dense mode: stride=1, threshold=0")
     for dsoname, ctx in active_binaries.items():
         basename = os.path.basename(dsoname)
-
         # Auto-tune insn-range-stride: if not user-specified, scale stride
         # to keep the number of probed addresses manageable
-        if args.insn_range_stride == 0:
+        if args.dense:
+            auto_stride = 1
+        elif args.insn_range_stride == 0:
             total_span = sum(end - begin + 1 for ((begin, end), _), _ in ctx.range_counts.items())
             # Target ~100K address lookups max; scale stride to match
             auto_stride = max(1, total_span // 100000)
