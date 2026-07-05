@@ -109,11 +109,12 @@ If needing to run on a older python version strip-types.py can be used to strip 
 - Much less mature.
 - Not a nightmare to build (I hope)
 - Much simpler (but only focussed on the gcc job)
+- Currently only supports Intel+LBR
+- Some differences in output due to differences in dwarf processing
 - Supports streaming mode to not save individual samples to disk.
 - Supports online mode for automatic background profiling
 - Supports wrappers to inject profile feedback into existing build systems with minimal changes.
-- Some differences in output due to differences in dwarf processing
-- Currently only supports Intel+LBR
+- Currently slower (but can be parallelized)[^1]. For larger input files usually less memory consumption because it doesn't load the full file.
 
 ## AFDO LTO build wrapper
 
@@ -146,3 +147,5 @@ parsing is relying on Ian Lance Taylor's
 ## License
 
 GPLv3-or-later
+
+[^1]: The main overhead is currently in the perf script python interface, some variant of [this perf patchkit](https://lore.kernel.org/linux-perf-users/20260522220435.2378363-1-irogers@google.com/) would likely help.
