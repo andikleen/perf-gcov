@@ -42,8 +42,14 @@ Build the backtrace python module
 make
 ```
 
-Then gcov.py or gcov-stream-profile.sh can be executed from this directory 
-without installation.
+Then the scripts can be executed from this directory
+without installation. Alternatively run.
+
+```
+make install
+```
+
+Default is to install in $HOME/bin. Can be overriden with prefix=
 
 ## Synopsis
 
@@ -102,8 +108,6 @@ make CC=afdo-gcc.py CXX=afdo-g++.py CFLAGS="--afdo-dir gcovdir -O2" CXXFLAGS="--
 gcov.py is (mostly) compatible to create\_gcov, and profile-merger.py mostly compatible to profile-merger. They can
 be used as a replacement in build systems.
 
-If needing to run on a older python version strip-types.py can be used to strip the type annotations from the python files.
-
 ## Differences to autofdo
 
 - Much less mature.
@@ -111,10 +115,11 @@ If needing to run on a older python version strip-types.py can be used to strip 
 - Much simpler (but only focussed on the gcc job)
 - Currently only supports Intel+LBR
 - Some differences in output due to differences in dwarf processing
-- Supports streaming mode to not save individual samples to disk.
-- Supports online mode for automatic background profiling
-- Supports wrappers to inject profile feedback into existing build systems with minimal changes.
+- Streaming mode to not save individual samples to disk.
+- Online mode for automatic background profiling
+- Wrappers to inject profile feedback into existing build systems with minimal changes.
 - Currently slower (but can be parallelized)[^1]. For larger input files usually less memory consumption because it doesn't load the full file.
+- Fully compatible with perf (e.g. supports compression and time slicing)
 
 ## AFDO LTO build wrapper
 
@@ -136,6 +141,13 @@ make CC=/path/to/afdo-gcc.py CXX=/path/to/afdo-g++.py \
 afdo-* will automatically enable -fauto-profile when profile is available from the training run.
 This requires building with LTO, using -g to enable debugging, and enabling optimization.
 It assumes that the output name of the linking is the same as the final binary name.
+
+## Output differences vs autofdo
+
+- gcov.py only output ranges that are covered by profile data, not the whole functions.
+- Uses a variable stride to probe the inline stacks. The default is every 4 bytes in the branch ranges, but can be larger for large programs. This could miss inlines that generate very little code (can be overriden with --dense)
+- gcov.py may output counts for some extra lines around the function starts/ends.
+- inline order can be different, even run-to-run, due to python dict randomization.
 
 ## Credits
 
