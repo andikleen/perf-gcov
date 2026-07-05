@@ -8,13 +8,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # the code is written in typed python using mypy,
-# please run make typecheck to verify after changes
+# please run make typecheck to verify after changes, and make test for regressions.
 
 # open:
 # check buildid?
 # better way to handle PIE binaries. fix libbacktrace?
 # better algorithm for range probing.
 # fallback mode using normal samples to handle no LBR support
+# support other architectures
 
 import os
 import sys
