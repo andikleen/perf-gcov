@@ -620,7 +620,6 @@ def expand_ranges(ctx: BinaryContext) -> None:
             root_name = root_frame.sym
         root_source_file = root_frame.file if root_frame.file else None
 
-
         names: list[str] = [root_name]
         source_files: list[str | None] = [root_source_file]
         for fr in frames[1:]:
@@ -677,9 +676,9 @@ def add_branch_targets(ctx: BinaryContext) -> None:
 
         sroot = sframes[0]
         droot = dframes[0]
-        is_call = sroot.sym != droot.sym
+        is_cross_function = sroot.sym != droot.sym
 
-        if not is_call:
+        if not is_cross_function:
             continue
 
         # Distinguish CALL from RET: use perf's symbol offset.
@@ -688,14 +687,14 @@ def add_branch_targets(ctx: BinaryContext) -> None:
         if to_off is not None and to_off > 0:
             continue
 
-        if from_sym and sroot.sym and sroot.sym in from_sym:
+        if from_sym and sroot.sym and sroot.sym == from_sym:
             sroot_name: str = from_sym
         elif sroot.sym:
             sroot_name = sroot.sym
         else:
             continue
 
-        if to_sym and droot.sym and droot.sym in to_sym:
+        if to_sym and droot.sym and droot.sym == to_sym:
             droot_name = to_sym
         elif droot.sym:
             droot_name = droot.sym
@@ -707,34 +706,32 @@ def add_branch_targets(ctx: BinaryContext) -> None:
 
         root = ctx.root(sroot_name, sroot_source_file)
         names: list[str] = [sroot_name]
-        source_files: list[str | None] = []
         for fr in sframes[1:]:
             if not fr.sym:
                 break
             names.append(fr.sym)
-            source_files.append(fr.file if fr.file else None)
 
         if len(names) != len(sframes):
             continue
 
-        path: list[tuple[str, int]] = []
+        path: list[tuple[str, int, str | None]] = []
         for i in range(1, len(sframes)):
-            path.append((names[i], frame_offset(sframes[i - 1], ctx)))
+            src_file = sframes[i].file if sframes[i].file else None
+            path.append((names[i], frame_offset(sframes[i - 1], ctx), src_file))
 
-        if droot_name and (droot_name, droot_source_file) not in ctx.func_timestamp:
+        if (droot_name, droot_source_file) not in ctx.func_timestamp:
             branch_time = ctx.first_address_time.get(from_addr)
             if branch_time:
                 ctx.func_timestamp[(droot_name, droot_source_file)] = branch_time
 
-        if not droot_name:
-            continue
         target = (droot_name, droot_source_file)
 
         leaf_off = frame_offset(sframes[-1], ctx)
         node = root
-        for i, (name, off) in enumerate(path):
-            src_file = source_files[i] if i < len(source_files) else None
+        for name, off, src_file in path:
             node = node.child(off, name, src_file)
+        # Zero-count stub: range probing may have set a real count here;
+        # if not, the position exists only to carry indirect call targets.
         node.positions.setdefault(leaf_off, 0)
         node.targets[leaf_off][target] += count
         added_targets += 1
@@ -1136,8 +1133,7 @@ def process_event(param_dict: dict[str, Any]) -> None:
 
         bs_from = bsym.get("from", "")
         bs_to = bsym.get("to", "")
-        # Parse symbol[+0xOFFSET]. Use try/except instead of len() check to
-        # avoid 38M len() calls in the hot loop.
+        # Parse symbol[+0xOFFSET].
         from_parts = bs_from.rsplit("+", 1)
         to_parts = bs_to.rsplit("+", 1)
         from_sym = from_parts[0] if from_parts[0] else None
