@@ -61,3 +61,14 @@ test:
 	./test-merger.sh
 	./test-afdo-wrap.sh
 	./test-parallel.sh
+
+prefix := ${HOME}
+
+INSTALL := gcov.py profile-merger.py suffix.py format.py gcov-dump.py ${target}
+
+install: all
+	# or create some lib directory for the libraries?
+	# drop more .py suffixes?
+	cp ${INSTALL} ${prefix}/bin
+	cp afdo-gcc.py ${prefix}/bin/afdo-gcc
+	ln -s ${prefix}/bin/afdo-gcc ${prefix}/bin/afdo-g++
