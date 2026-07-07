@@ -19,22 +19,19 @@ from format import *
 # ---- Data model ----
 
 
+@dataclass(slots=True)
 class FuncNode:
     """Node in a parsed gcov profile tree for diff comparison."""
 
-    __slots__ = ("name", "source_file", "head_count", "timestamp",
-                 "positions", "targets", "_children")
-
-    def __init__(self, name: str, source_file: str | None = None,
-                 head_count: int = 0, timestamp: int = 0):
-        self.name = name
-        self.source_file = source_file
-        self.head_count = head_count
-        self.timestamp = timestamp
-        self.positions: dict[int, int] = defaultdict(int)
-        self.targets: dict[int, dict[tuple[str, str | None], int]] = \
-            defaultdict(lambda: defaultdict(int))
-        self._children: dict[tuple[int, str, str | None], "FuncNode"] = {}
+    name: str
+    source_file: str | None = None
+    head_count: int = 0
+    timestamp: int = 0
+    positions: dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    targets: dict[int, dict[tuple[str, str | None], int]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(int)))
+    _children: dict[tuple[int, str, str | None], "FuncNode"] = field(
+        default_factory=dict, init=False, repr=False)
 
     def child(self, offset: int, name: str,
               source_file: str | None = None) -> "FuncNode":
@@ -51,12 +48,6 @@ class FuncNode:
 
     def total_count(self) -> int:
         return sum(self.positions.values())
-
-    def child_count(self) -> int:
-        return sum(c.total_count() for c in self.children)
-
-    def position_count(self) -> int:
-        return len(self.positions)
 
 
 @dataclass
@@ -270,9 +261,6 @@ def _read_working_set(f: BinaryIO, path: str) -> None:
 # ---- Diff logic ----
 
 
-def _count_only_positions(node: FuncNode) -> int:
-    """Count positions in a function, including children."""
-    return node.position_count()
 
 
 def _sum_only_counts(node: FuncNode) -> int:
@@ -528,19 +516,6 @@ def _fmt_count_delta(va: int | None, vb: int | None,
     return f"{va} -> {vb}{suffix}"
 
 
-def _render_summary(result: DiffResult) -> None:
-    s = result.summary
-    print("=== gcov-diff summary ===")
-    print(f"Functions only in A: {s.functions_only_a}")
-    print(f"Functions only in B: {s.functions_only_b}")
-    print(f"Functions common:    {s.functions_common}")
-    print(f"Total counts A:      {s.total_count_a}")
-    print(f"Total counts B:      {s.total_count_b}")
-    if s.total_count_a > 0:
-        delta = s.total_count_b - s.total_count_a
-        print(f"Count delta:         {delta:+d} ({_pct_str(delta, s.total_count_a)})")
-    print(f"Newly covered positions: {s.newly_covered_positions}")
-    print(f"Uncovered positions:     {s.uncovered_positions}")
 
 
 def _render_summary_header(result: DiffResult, file_a: str, file_b: str,
