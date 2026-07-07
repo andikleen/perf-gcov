@@ -102,6 +102,7 @@ make CC=afdo-gcc.py CXX=afdo-g++.py CFLAGS="--afdo-dir gcovdir -O2" CXXFLAGS="--
 - gcov-online-profile.sh - background gcov generation for all running binaries with debuginfo
 - afdo-gcc.py / afdo-g++ - compiler wrapper that auto-injects -fauto-profile for LTO link steps
 - gcov-parallel.sh - parallelize gcov.py over multiple CPUs for large input files
+- gcov-diff.py - compare two gcov files
 
 ## Compatibility
 

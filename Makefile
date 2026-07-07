@@ -47,7 +47,7 @@ clean:
 	rm -rf $(DIRS)
 
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
-	test-suffix.py afdo-gcc.py strip-types.py
+	test-suffix.py afdo-gcc.py strip-types.py gcov-diff.py
 typecheck:
 	PYRIGHT_PYTHON_FORCE_VERSION=latest pyright ${PSRC}
 
@@ -61,10 +61,11 @@ test:
 	./test-merger.sh
 	./test-afdo-wrap.sh
 	./test-parallel.sh
+	./test-gcov-diff.sh
 
 prefix := ${HOME}
 
-INSTALL := gcov.py profile-merger.py suffix.py format.py gcov-dump.py ${target}
+INSTALL := gcov.py profile-merger.py suffix.py format.py gcov-dump.py gcov-diff.py ${target}
 
 install: all
 	# or create some lib directory for the libraries?
