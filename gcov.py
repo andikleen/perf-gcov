@@ -63,8 +63,8 @@ ap.add_argument('--dense', action='store_true',
 ap.add_argument('--verbose', action='store_true', help="Be more verbose")
 ap.add_argument('--gcov-version', '-gcov_version', type=int, choices=[2, 3], default=3,
                 help="GCOV version: 2 (upto gcc 15) or 3 (gcc 16+, default)")
-ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=4096,
-                help="Skip duplicate top LBR entry if from-to stride exceeds this. Default 4096")
+ap.add_argument('--strip-dup-backedge-stride-limit', type=int, default=0,
+                help="Skip duplicate top LBR entry if from-to stride exceeds this (0=disabled). Default 0")
 ap.add_argument('--insn-range-max', type=int, default=1 << 20, help="Max range between branches to probe")
 ap.add_argument('--insn-range-stride', type=int, default=0, help="Stride to probe for (0=auto based on profile size)")
 ap.add_argument('--suffix-elision', choices=suffix.ELIDE_POLICIES, default='all',
@@ -1154,7 +1154,7 @@ def process_event(param_dict: dict[str, Any]) -> None:
         # most-recently-seen branch from the same binary
         prev = last_branch.get(dsoname)
         if prev is not None and prev["from"] == br["from"] and prev["to"] == br["to"]:
-            if abs(br["from"] - br["to"]) > args.strip_dup_backedge_stride_limit:
+            if args.strip_dup_backedge_stride_limit and abs(br["from"] - br["to"]) > args.strip_dup_backedge_stride_limit:
                 continue
 
         last_branch[dsoname] = br
