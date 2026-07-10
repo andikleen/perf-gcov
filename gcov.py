@@ -167,8 +167,10 @@ class BinaryContext:
         self.first_address_time: dict[int, int] = {}
         # Root function name -> first sample timestamp
         self.func_timestamp: dict[FuncKey, int] = {}
-        # Sample count for --min-samples filtering
+        # Number of perf sample events seen for this binary
         self.sample_count = 0
+        # Number of individual LBR branches seen for this binary
+        self.branch_count = 0
         # Whether we have printed per-binary warnings (to avoid spamming)
         self.warned_no_debug: bool = False
         self.warned_neg_line: int = 0
@@ -486,13 +488,18 @@ def compute_summary(ctx: BinaryContext) -> dict:
     def traverse_node(node: FuncNode, is_root: bool = False) -> None:
         nonlocal total_count, max_count, max_function_count, num_counts
 
-        # For root nodes, track function entry count (offset 0)
-        if is_root and 0 in node.positions:
-            func_head_count = node.positions[0]
-            max_function_count = max(max_function_count, func_head_count)
+        # For root nodes, track function head count
+        if is_root:
+            head = node.head_count() if callable(node.head_count) else node.head_count
+            max_function_count = max(max_function_count, int(head))
 
-        # Collect all position counts from this node
+        # Collect all position counts from this node.
+        # Positions whose offset matches a callsite child are not written
+        # (filtered_positions skips them), so exclude them from the summary.
+        child_offsets = {coff for (coff, _, _) in node.children.keys()}
         for offset, count in node.positions.items():
+            if offset in child_offsets:
+                continue
             # Exclude scaffolding zeros (gcov.py injects them; autofdo doesn't)
             if count > 0:
                 total_count += count
@@ -505,7 +512,7 @@ def compute_summary(ctx: BinaryContext) -> dict:
             traverse_node(child, is_root=False)
 
     # Traverse all top-level functions
-    for key, func_node in ctx.tree.items():
+    for func_node in ctx.tree.values():
         traverse_node(func_node, is_root=True)
 
     # Compute detailed summaries (percentile histogram)
@@ -576,7 +583,7 @@ def collect_strings_v3(ctx: BinaryContext, node: FuncNode, files: set[str],
     for _, _, child in emitted_children(node):
         collect_strings_v3(ctx, child, files, func_to_file)
 
-def expand_ranges(ctx: BinaryContext) -> None:
+def expand_ranges(ctx: BinaryContext, stride: int) -> None:
     """Expand range_counts into position counts in the profile tree for one binary.
 
     Overlapping ranges SUM per address, then addresses mapping to the same
@@ -594,7 +601,7 @@ def expand_ranges(ctx: BinaryContext) -> None:
     address_sym: dict[int, str | None] = {}
 
     for ((begin, end), range_sym), range_count in ctx.range_counts.items():
-        for addr in range(begin, end + 1, args.insn_range_stride):
+        for addr in range(begin, end + 1, stride):
             frames = getframes(ctx, addr)
             if frames is None:
                 continue
@@ -614,9 +621,8 @@ def expand_ranges(ctx: BinaryContext) -> None:
         if not root_frame.sym:
             stats.missing_symbols += 1
             continue
-
         perf_sym = address_sym.get(addr)
-        if perf_sym and root_frame.sym in perf_sym:
+        if perf_sym and root_frame.sym == perf_sym:
             root_name = perf_sym
         else:
             root_name = root_frame.sym
@@ -951,10 +957,9 @@ def trace_end() -> None:
                 vprint(f"  {basename}: auto stride={auto_stride} (total_span={total_span})")
         else:
             auto_stride = args.insn_range_stride
-        args.insn_range_stride = auto_stride
 
         vprint(f"\nProcessing {basename} ({ctx.sample_count} samples, stride={auto_stride})...")
-        expand_ranges(ctx)
+        expand_ranges(ctx, auto_stride)
         add_branch_targets(ctx)
         propagate_head_counts(ctx.tree)
         propagate_timestamps(ctx)
@@ -1071,7 +1076,7 @@ def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
                   f"function={fr.sym}, line={fr.line}, base={base}",
                   file=sys.stderr)
             ctx.warned_neg_line += 1
-            if ctx.warned_neg_line == 10:
+            if ctx.warned_neg_line == MAX_LINE_WARN:
                 print("WARNING: (further negative offsets suppressed)",
                       file=sys.stderr)
         elif not ctx.warned_neg_line and not args.quiet:
@@ -1094,8 +1099,10 @@ def process_event(param_dict: dict[str, Any]) -> None:
     if len(brstack) == 0:
         return
 
-    # Pass mmap info to get_or_create_binary so it can compute
-    # the load offset once per DSO (only for ET_DYN).
+    # mmap info in param_dict describes the sample's own DSO, not
+    # necessarily every DSO that appears in the branch stack. We can
+    # only trust it when the branch DSO matches the sample DSO.
+    sample_dso = param_dict.get("dso")
     dso_map_start = param_dict.get("dso_map_start", 0)
     map_pgoff = param_dict.get("map_pgoff", 0)
     sample_time = param_dict.get("sample", {}).get("time", 0)
@@ -1104,6 +1111,9 @@ def process_event(param_dict: dict[str, Any]) -> None:
     # Track the most-recently-seen branch per binary for
     # duplicate-backedge filtering and range computation.
     last_branch: dict[str, dict] = {}
+
+    # Count each binary at most once per sample event for --min-samples.
+    seen_binaries: set[str] = set()
 
     for br, bsym in zip(brstack, brstacksym):
         stats.raw_total_branches += 1
@@ -1117,12 +1127,28 @@ def process_event(param_dict: dict[str, Any]) -> None:
             stats.raw_ignored_branches += 1
             continue
 
-        ctx = get_or_create_binary(dsoname, dso_map_start, map_pgoff)
+        # Only use the sample's mmap info for the matching DSO. For other
+        # DSOs, reuse a previously-created context (with a known load
+        # offset from when it was the sample DSO). If unseen, non-PIE
+        # DSOs can be processed with load_offset=0; PIE/shared DSOs
+        # without mmap info must be skipped to avoid corrupt addresses.
+        if dsoname == sample_dso:
+            ctx = get_or_create_binary(dsoname, dso_map_start, map_pgoff)
+        else:
+            ctx = binaries.get(dsoname)
+            if ctx is None:
+                if is_position_independent(dsoname):
+                    stats.raw_ignored_branches += 1
+                    continue
+                ctx = get_or_create_binary(dsoname, 0, 0)
         if ctx is None:
             stats.raw_ignored_branches += 1
             continue
 
-        ctx.sample_count += 1
+        if dsoname not in seen_binaries:
+            ctx.sample_count += 1
+            seen_binaries.add(dsoname)
+        ctx.branch_count += 1
 
         # Duplicate-backedge filter: skip if this branch matches the
         # most-recently-seen branch from the same binary

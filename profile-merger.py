@@ -356,11 +356,16 @@ def compute_summary(tree: dict[FuncKey, FuncNode]) -> dict:
     def traverse_node(node: FuncNode, is_root: bool = False) -> None:
         nonlocal total_count, max_count, max_function_count, num_counts
 
-        if is_root and 0 in node.positions:
-            func_head_count = node.positions[0]
-            max_function_count = max(max_function_count, func_head_count)
+        if is_root:
+            func_head_count = node.head_count() if callable(node.head_count) else node.head_count
+            max_function_count = max(max_function_count, int(func_head_count))
 
+        # Positions whose offset matches a callsite child are not written
+        # (filtered_positions skips them), so exclude them from the summary.
+        child_offsets = {coff for (coff, _, _) in node.children.keys()}
         for offset, count in node.positions.items():
+            if offset in child_offsets:
+                continue
             if count > 0:
                 total_count += count
                 max_count = max(max_count, count)
