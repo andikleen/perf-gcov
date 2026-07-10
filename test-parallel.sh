@@ -11,6 +11,16 @@ PERF=${PERF:-perf}
 PARALLEL=./gcov-parallel.sh
 DUMPER=./gcov-dump.py
 
+# Find a GCC 16+ capable compiler for v3 format tests.
+# Set CC_V3 environment variable to override auto-detection.
+if [ -n "$CC_V3" ]; then
+  :  # user-provided
+elif command -v gcc-16 >/dev/null 2>&1; then
+  CC_V3=gcc-16
+else
+  CC_V3=$CC
+fi
+
 set -x
 set -e
 
@@ -27,7 +37,7 @@ trap cleanup_parallel EXIT
 
 # Check GCC version for v3 support
 check_gcc_v3_support() {
-  local version=$($CC -dumpversion | cut -d. -f1)
+  local version=$($CC_V3 -dumpversion | cut -d. -f1)
   if [ "$version" -ge 16 ]; then
     return 0
   else
@@ -46,11 +56,11 @@ cleanup_files="perf.data"
 
 # Generate reference gcov (single-threaded)
 echo "=== REFERENCE gcov v2 ==="
-$PERF script -i perf.data gcov.py ref.gcov --verbose --binary ${i} --gcov-version 2 2>&1 | tail -5
+$PERF script -i perf.data gcov.py ref.gcov --verbose --min-samples 1 --binary ${i} --gcov-version 2 2>&1 | tail -5
 cleanup_files="${cleanup_files} ref.gcov"
 
 echo "=== REFERENCE gcov v3 ==="
-$PERF script -i perf.data gcov.py ref3.gcov --verbose --binary ${i} --gcov-version 3 2>&1 | tail -5
+$PERF script -i perf.data gcov.py ref3.gcov --verbose --min-samples 1 --binary ${i} --gcov-version 3 2>&1 | tail -5
 cleanup_files="${cleanup_files} ref3.gcov"
 
 # Cap max jobs to 4 — larger N creates time slices too granular for a small
@@ -61,7 +71,7 @@ if [[ $MAX_JOBS -gt 4 ]]; then MAX_JOBS=4; fi
 # Test gcov-parallel.sh with various job counts for v2
 for jobs in 1 2 ${MAX_JOBS}; do
   echo "=== PARALLEL jobs=${jobs} gcov v2 ==="
-  ${PARALLEL} -j ${jobs} -i perf.data --binary ${i} --gcov par.${jobs}.v2.gcov --gcov-version 2
+  ${PARALLEL} -j ${jobs} -i perf.data --binary ${i} --gcov par.${jobs}.v2.gcov --gcov-version 2 --min-samples 1
   cleanup_files="${cleanup_files} par.${jobs}.v2.gcov"
 
   echo "=== COMPARE v2 jobs=${jobs} ==="
@@ -73,7 +83,7 @@ done
 if check_gcc_v3_support; then
   for jobs in 1 2 ${MAX_JOBS}; do
     echo "=== PARALLEL jobs=${jobs} gcov v3 ==="
-    ${PARALLEL} -j ${jobs} -i perf.data --binary ${i} --gcov par.${jobs}.v3.gcov --gcov-version 3
+    ${PARALLEL} -j ${jobs} -i perf.data --binary ${i} --gcov par.${jobs}.v3.gcov --gcov-version 3 --min-samples 1
     cleanup_files="${cleanup_files} par.${jobs}.v3.gcov"
 
     echo "=== COMPARE v3 jobs=${jobs} ==="

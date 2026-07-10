@@ -94,7 +94,7 @@ local i=$1
 $CC -g -O2 -o ${i} ${i}.c
 
 echo "=== Testing gcov-stream-profile.sh (v2) ==="
-./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov --gcov-version 2 -- ./${i}
+./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov --min-samples 1 --gcov-version 2 -- ./${i}
 
 echo "Stream pipeline dump:"
 ./gcov-dump.py --max-count 3000000 ${i}.stream.gcov
@@ -104,7 +104,7 @@ $CC -g -O2 -fauto-profile=${i}.stream.gcov ${i}.c -o ${i}.stream.opt
 ./${i}.stream.opt
 
 echo "=== Testing gcov-stream-profile.sh (v3) ==="
-./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov3 --gcov-version 3 -- ./${i}
+./gcov-stream-profile.sh --binary ${i} --gcov ${i}.stream.gcov3 --min-samples 1 --gcov-version 3 -- ./${i}
 
 echo "v3 stream pipeline dump:"
 ./gcov-dump.py ${i}.stream.gcov3

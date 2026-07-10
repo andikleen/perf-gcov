@@ -43,13 +43,13 @@ $PERF record -b -o ${i}.d2 -c 10001 -e branches:ppu ./${i} 2>&1 | tail -1
 cleanup_files="${i}.d1 ${i}.d2"
 
 # Generate gcov v2 from both
-$PERF script -i ${i}.d1 gcov.py ${i}.1.2 --verbose --binary ${i} --gcov-version 2 2>&1 | tail -5
-$PERF script -i ${i}.d2 gcov.py ${i}.2.2 --verbose --binary ${i} --gcov-version 2 2>&1 | tail -5
+$PERF script -i ${i}.d1 gcov.py ${i}.1.2 --verbose --min-samples 1 --binary ${i} --gcov-version 2 2>&1 | tail -5
+$PERF script -i ${i}.d2 gcov.py ${i}.2.2 --verbose --min-samples 1 --binary ${i} --gcov-version 2 2>&1 | tail -5
 cleanup_files="${cleanup_files} ${i}.1.2 ${i}.2.2"
 
 # Generate gcov v3 from both
-$PERF script -i ${i}.d1 gcov.py ${i}.1.3 --verbose --binary ${i} --gcov-version 3 2>&1 | tail -5
-$PERF script -i ${i}.d2 gcov.py ${i}.2.3 --verbose --binary ${i} --gcov-version 3 2>&1 | tail -5
+$PERF script -i ${i}.d1 gcov.py ${i}.1.3 --verbose --min-samples 1 --binary ${i} --gcov-version 3 2>&1 | tail -5
+$PERF script -i ${i}.d2 gcov.py ${i}.2.3 --verbose --min-samples 1 --binary ${i} --gcov-version 3 2>&1 | tail -5
 cleanup_files="${cleanup_files} ${i}.1.3 ${i}.2.3"
 
 # 1. Identity: single-file merge produces identical dump

@@ -65,7 +65,7 @@ cleanup_files="${cleanup_files} multibin.data"
 
 echo "=== AUTO-DISCOVERY (4 binaries) ==="
 rm -f tmulti1.gcov tmulti2.gcov tmulti3.gcov tnonunique.gcov
-$PERF script -i multibin.data ./gcov.py --gcov-version 3 2>&1
+$PERF script -i multibin.data ./gcov.py --gcov-version 3 --min-samples 1 2>&1
 test -f tmulti1.gcov || { echo "missing tmulti1.gcov"; exit 1; }
 test -f tmulti2.gcov || { echo "missing tmulti2.gcov"; exit 1; }
 test -f tmulti3.gcov || { echo "missing tmulti3.gcov"; exit 1; }
@@ -82,7 +82,7 @@ echo "BINARY FILTER: OK"
 
 echo "=== --binary FNMATCH (tmulti[13]) ==="
 rm -f tmulti1.gcov tmulti2.gcov tmulti3.gcov
-$PERF script -i multibin.data ./gcov.py --gcov-version 3 --binary 'tmulti[13]' 2>&1 | tail -10
+$PERF script -i multibin.data ./gcov.py --gcov-version 3 --binary 'tmulti[13]' --min-samples 1 2>&1 | tail -10
 test -f tmulti1.gcov || { echo "missing tmulti1.gcov from fnmatch"; exit 1; }
 test -f tmulti3.gcov || { echo "missing tmulti3.gcov from fnmatch"; exit 1; }
 test ! -f tmulti2.gcov || { echo "tmulti2.gcov should be filtered out by fnmatch"; exit 1; }
@@ -90,7 +90,7 @@ echo "FNMATCH FILTER: OK"
 
 echo "=== --output-dir ==="
 rm -rf multibin_out
-$PERF script -i multibin.data ./gcov.py --gcov-version 3 --binary tmulti1 --output-dir multibin_out 2>&1 | tail -10
+$PERF script -i multibin.data ./gcov.py --gcov-version 3 --binary tmulti1 --output-dir multibin_out --min-samples 1 2>&1 | tail -10
 test -f multibin_out/tmulti1.gcov || { echo "missing multibin_out/tmulti1.gcov"; exit 1; }
 test ! -f multibin_out/tmulti2.gcov || { echo "tmulti2.gcov should not be in output dir"; exit 1; }
 test ! -f multibin_out/tmulti3.gcov || { echo "tmulti3.gcov should not be in output dir"; exit 1; }
@@ -108,7 +108,7 @@ rm -f tnonunique.gcov tnonunique.dump tnonunique-perf.data
 # Record tnonunique separately (smaller data, avoids scanning 4-binary file)
 $PERF record -b -o tnonunique-perf.data -c 10003 -e branches:ppu ./tnonunique >/dev/null 2>&1
 cleanup_files="${cleanup_files} tnonunique-perf.data"
-$PERF script -i tnonunique-perf.data ./gcov.py tnonunique.gcov --gcov-version 3 2>&1
+$PERF script -i tnonunique-perf.data ./gcov.py tnonunique.gcov --gcov-version 3 --min-samples 1 2>&1
 # Verify gcov contains both static functions (compute and helper each appear)
 ./gcov-dump.py tnonunique.gcov > tnonunique.dump
 echo "GCOV dump for tnonunique (non-unique symbols):"
@@ -157,7 +157,7 @@ cleanup_files="${cleanup_files} tlibmain.data"
 # Auto-discover both binaries (no --binary filter)
 echo "--- Auto-discover (v2) ---"
 rm -f tlibmain.gcov libtlib.so.gcov
-$PERF script -i tlibmain.data ./gcov.py --gcov-version 2 2>&1 | tail -5
+$PERF script -i tlibmain.data ./gcov.py --gcov-version 2 --min-samples 1 2>&1 | tail -5
 
 # Verify shared library gcov was generated with its function
 test -f libtlib.so.gcov || { echo "FAIL: libtlib.so.gcov not generated"; exit 1; }
@@ -170,7 +170,7 @@ echo "SHARED LIBRARY (v2): OK"
 
 echo "--- Auto-discover (v3) ---"
 rm -f libtlib.so.gcov
-$PERF script -i tlibmain.data ./gcov.py --gcov-version 3 2>&1 | tail -5
+$PERF script -i tlibmain.data ./gcov.py --gcov-version 3 --min-samples 1 2>&1 | tail -5
 test -f libtlib.so.gcov || { echo "FAIL: libtlib.so.gcov (v3) not generated"; exit 1; }
 echo "libtlib.so.gcov (v3): OK"
 ./gcov-dump.py libtlib.so.gcov > libtlib.so.dump3
