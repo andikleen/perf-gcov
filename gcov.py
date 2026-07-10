@@ -117,7 +117,7 @@ try:
 except ImportError:
     sys.exit("Cannot find perf python modules")
 
-args = ap.parse_args()
+args: argparse.Namespace = None  # type: ignore[assignment]  # set by trace_begin before any use
 
 def vprint(*vals: Any, **kwargs: Any) -> None:
     """Print only if not in quiet mode."""
@@ -125,7 +125,8 @@ def vprint(*vals: Any, **kwargs: Any) -> None:
         print(*vals, **kwargs)
 
 def trace_begin() -> None:
-    pass
+    global args
+    args = ap.parse_args()
 
 # One frame of an inline stack as returned by libbacktrace pcinfo.
 Frame = NamedTuple('Frame', [('file', str | None),
