@@ -24,33 +24,59 @@ trap cleanup EXIT
 OUTDIR() { echo "$TMPDIR/test-$1"; }
 pass() { echo "PASS"; }
 fail() { echo "FAIL"; FAILED=1; }
+skip() { echo "SKIP ($1)"; }
 
-echo "=== Test 1: Basic + cleanup ==="
+COMMON_OPTS=()
+PID_OPTS=(--non-global -- --pid "$WPID")
+
+system_wide_works() {
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    if perf record -a -b -e branches:ppu -c 300003 -o "$tmpdir/perf.data" sleep 0.1 >/dev/null 2>&1; then
+        if [[ -s "$tmpdir/perf.data" ]]; then
+            rm -rf "$tmpdir"
+            return 0
+        fi
+    fi
+    rm -rf "$tmpdir"
+    return 1
+}
+
+echo "=== Test 1: Basic + cleanup (system-wide) ==="
 rm -rf "$(OUTDIR basic)"
-$ONLINE --output-dir "$(OUTDIR basic)" --interval 1 --binary infloop --iterations 2 >/dev/null 2>&1
-[ -f "$(OUTDIR basic)/infloop.gcov" ] && pass || fail
+if system_wide_works; then
+    $ONLINE --output-dir "$(OUTDIR basic)" --interval 1 --binary infloop --iterations 2 "${COMMON_OPTS[@]}" >/dev/null 2>&1
+    [ -f "$(OUTDIR basic)/infloop.gcov" ] && pass || fail
+else
+    skip "system-wide perf unavailable"
+fi
 
-echo "=== Test 2: Profile merging (3 iterations) ==="
+echo "=== Test 2: Basic + cleanup (non-global) ==="
+rm -rf "$(OUTDIR basic-ng)"
+$ONLINE --output-dir "$(OUTDIR basic-ng)" --interval 1 --binary infloop --iterations 2 "${COMMON_OPTS[@]}" "${PID_OPTS[@]}" >/dev/null 2>&1
+[ -f "$(OUTDIR basic-ng)/infloop.gcov" ] && pass || fail
+
+echo "=== Test 3: Profile merging (3 iterations) ==="
 rm -rf "$(OUTDIR merge)"
-$ONLINE --output-dir "$(OUTDIR merge)" --interval 1 --binary infloop --iterations 3 >/dev/null 2>&1
+$ONLINE --output-dir "$(OUTDIR merge)" --interval 1 --binary infloop --iterations 3 "${COMMON_OPTS[@]}" "${PID_OPTS[@]}" >/dev/null 2>&1
 [ -f "$(OUTDIR merge)/infloop.gcov" ] && pass || fail
 
-echo "=== Test 3: Custom parameters ==="
+echo "=== Test 4: Custom parameters ==="
 rm -rf "$(OUTDIR params)"
-$ONLINE --output-dir "$(OUTDIR params)" --interval 1 --count 100000 --binary infloop --iterations 1 >/dev/null 2>&1
+$ONLINE --output-dir "$(OUTDIR params)" --interval 1 --count 100000 --binary infloop --iterations 1 "${COMMON_OPTS[@]}" "${PID_OPTS[@]}" >/dev/null 2>&1
 [ -f "$(OUTDIR params)/infloop.gcov" ] && pass || fail
 
-echo "=== Test 4: --quiet mode ==="
+echo "=== Test 5: --quiet mode ==="
 rm -rf "$(OUTDIR quiet)"
-$ONLINE --output-dir "$(OUTDIR quiet)" --interval 1 --binary infloop --iterations 1 --quiet >/dev/null 2>&1
+$ONLINE --output-dir "$(OUTDIR quiet)" --interval 1 --binary infloop --iterations 1 --quiet "${COMMON_OPTS[@]}" "${PID_OPTS[@]}" >/dev/null 2>&1
 [ -f "$(OUTDIR quiet)/infloop.gcov" ] && pass || fail
 
-echo "=== Test 5: Multiple --binary flags ==="
+echo "=== Test 6: Multiple --binary flags ==="
 rm -rf "$(OUTDIR multi)"
-$ONLINE --output-dir "$(OUTDIR multi)" --interval 1 --binary infloop --binary infloop --iterations 1 >/dev/null 2>&1
+$ONLINE --output-dir "$(OUTDIR multi)" --interval 1 --binary infloop --binary infloop --iterations 1 "${COMMON_OPTS[@]}" "${PID_OPTS[@]}" >/dev/null 2>&1
 [ -f "$(OUTDIR multi)/infloop.gcov" ] && pass || fail
 
-echo "=== Test 6: Temp dirs cleaned ==="
+echo "=== Test 7: Temp dirs cleaned ==="
 LEFT=$(ls /tmp/gcov-online-?????? 2>/dev/null | wc -l)
 [ "$LEFT" -eq 0 ] && pass || { echo "($LEFT leftover)"; fail; }
 
