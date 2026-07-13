@@ -1153,8 +1153,11 @@ def process_event(param_dict: dict[str, Any]) -> None:
         # Duplicate-backedge filter: skip if this branch matches the
         # most-recently-seen branch from the same binary
         prev = last_branch.get(dsoname)
-        if prev is not None and prev["from"] == br["from"] and prev["to"] == br["to"]:
-            if args.strip_dup_backedge_stride_limit and abs(br["from"] - br["to"]) > args.strip_dup_backedge_stride_limit:
+        if (args.strip_dup_backedge_stride_limit and
+            prev is not None and
+            prev["from"] == br["from"] and
+            prev["to"] == br["to"] and
+            abs(br["from"] - br["to"]) > args.strip_dup_backedge_stride_limit):
                 continue
 
         last_branch[dsoname] = br
