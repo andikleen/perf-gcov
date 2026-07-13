@@ -12,13 +12,14 @@ set -euo pipefail
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 GCOV_PY="$SCRIPT_DIR/gcov.py"
 MERGER="$SCRIPT_DIR/profile-merger.py"
+PERF=${PERF:-perf}
 
 # Defaults
 OUTPUT_DIR="."
 INTERVAL=5
 ITERATIONS=0
 BINARIES=()
-EVENT="branches:ppu"
+EVENT="br_inst_retired.near_taken:ppu"
 COUNT=300003
 PERF_RECORD_OPTS=""
 QUIET=false
@@ -40,20 +41,18 @@ Script options:
   --output-dir DIR  Output directory for merged profiles (default: current dir)
   --interval N      Sleep duration per iteration (default: 5)
   --iterations N    Run N iterations then exit (default: infinite)
-  --event EVENT     Perf event (default: branches:ppu)
+  --event EVENT     Perf event to sample
   --count N         Sample period (default: 300003)
   --binary NAME     Binary to profile (fnmatch pattern, repeatable).
                     If omitted, all binaries are profiled.
   --non-global      Do not use system-wide (-a) mode.
-                    Requires a perf target (e.g. --pid, -p, --uid, --cgroup) in the -- section.
+                    Requires a perf target (e.g. --pid, --uid, --cgroup) in the -- section.
   --quiet           Suppress all output except config summary
   --verbose         Show detailed per-iteration output
 
 Perf record options (pass after --):
-  --pid PID         Profile process PID (useful when system-wide perf is restricted)
-  --cpu CPU         Limit profiling to specific CPUs (e.g., 0, 0-3)
-  --cgroup CGROUP   Limit profiling to specific cgroup
-  --uid UID         Limit profiling to specific user ID
+  <see man perf-record>
+  Add -a if global mode is still needed with other options.
 
 Common gcov.py options (pass before --):
   --gcov-version N  GCOV version (default: 3)
@@ -117,21 +116,6 @@ while [[ $# -gt 0 ]]; do
         --count)
             require_int_arg "$1" "${2-}"
             COUNT="$2"
-            shift 2
-            ;;
-        --cpu)
-            require_arg "$1" "${2-}"
-            PERF_RECORD_OPTS="$PERF_RECORD_OPTS --cpu $2"
-            shift 2
-            ;;
-        --cgroup)
-            require_arg "$1" "${2-}"
-            PERF_RECORD_OPTS="$PERF_RECORD_OPTS --cgroup $2"
-            shift 2
-            ;;
-        --uid)
-            require_arg "$1" "${2-}"
-            PERF_RECORD_OPTS="$PERF_RECORD_OPTS --uid $2"
             shift 2
             ;;
         --binary)
@@ -232,7 +216,7 @@ elif $NON_GLOBAL; then
     exit 1
 elif ! system_wide_works; then
     echo "error: system-wide perf recording is not available in this environment." >&2
-    echo "       Pass a perf target after --, e.g.: -- --pid PID" >&2
+    echo "       Pass a perf target after --, e.g.: -- --pid PID or change /proc/sys/kernel/perf_event_paranoid" >&2
     exit 1
 fi
 
@@ -325,7 +309,7 @@ while true; do
     CURRENT_TMPDIR=$(mktemp -d /tmp/gcov-online-XXXXXX)
 
     # Profile target for N seconds
-    if ! perf record -b -e "$EVENT" -c "$COUNT" $PERF_TARGET $PERF_RECORD_OPTS \
+    if ! $PERF record -b -e "$EVENT" -c "$COUNT" $PERF_TARGET $PERF_RECORD_OPTS \
         -o "$CURRENT_TMPDIR/perf.data" sleep "$INTERVAL" >/dev/null 2>"$CURRENT_TMPDIR/perf-err.txt"; then
         if [[ ! -s "$CURRENT_TMPDIR/perf.data" ]]; then
             echo "warning: perf record produced no data (iteration $ITER)" >&2
