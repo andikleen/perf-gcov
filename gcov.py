@@ -1158,7 +1158,7 @@ def process_event(param_dict: dict[str, Any]) -> None:
             prev["from"] == br["from"] and
             prev["to"] == br["to"] and
             abs(br["from"] - br["to"]) > args.strip_dup_backedge_stride_limit):
-                continue
+            continue
 
         last_branch[dsoname] = br
 
