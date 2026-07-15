@@ -4,11 +4,14 @@
 # Options:
 #   --afdo-dir=DIR   directory of <binary>.gcov profiles (enables injection)
 #   --afdo-cc=PATH   explicit real compiler (highest precedence)
+#   --verbose        report profile/link decisions
+#   --verbose=2      also print the reprocessed command line
 # Env: AFDO_CC / AFDO_CXX  real C / C++ compiler if --afdo-cc unset
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+import shlex
 import sys
 import subprocess
 
@@ -23,13 +26,12 @@ def detect_family(argv0: str) -> str:
         return "g++"
     return "gcc"
 
-def parse_wrapper_args(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
-    """Parse wrapper-specific args, return (afdo_dir, afdo_cc, compiler_args).
+def parse_wrapper_args(argv: list[str]) -> tuple[str | None, str | None, int, list[str]]:
+    """Parse wrapper args, return (afdo_dir, afdo_cc, verbose, compiler_args)."""
 
-    Strips --afdo-dir and --afdo-cc from the argument list.
-    """
     afdo_dir: str | None = None
     afdo_cc: str | None = None
+    verbose = 0
     compiler_args: list[str] = []
 
     i = 0
@@ -60,11 +62,22 @@ def parse_wrapper_args(argv: list[str]) -> tuple[str | None, str | None, list[st
                 sys.exit("afdo-gcc: --afdo-cc requires a value")
             afdo_cc = argv[i + 1]
             i += 2
+        # --verbose[=LEVEL]
+        elif arg == "--verbose":
+            verbose = 1
+            i += 1
+        elif arg.startswith("--verbose="):
+            value = arg.split("=", 1)[1]
+            if value not in ("1", "2"):
+                sys.exit("afdo-gcc: --verbose accepts 1 or 2")
+            verbose = int(value)
+            i += 1
         else:
             compiler_args.append(arg)
             i += 1
 
-    return afdo_dir, afdo_cc, compiler_args
+    return afdo_dir, afdo_cc, verbose, compiler_args
+
 
 def find_real_compiler(family: str, override: str | None) -> str:
     """Find the real compiler, respecting precedence and skipping self."""
@@ -144,6 +157,7 @@ def print_help() -> None:
 Wrapper options:
   --afdo-dir DIR        Directory of <binary>.gcov profiles (enables injection)
   --afdo-cc PATH        Explicit real compiler path (highest precedence)
+  --verbose[=LEVEL]     Report profile/link decisions (LEVEL 2 includes command)
   --help                Show this help message
 
 Environment variables:
@@ -158,6 +172,7 @@ Behavior:
 All other options are passed through to the real compiler.
 Use 'gcc --help' or 'g++ --help' for compiler options.""")
     sys.exit(0)
+
 
 def main() -> None:
     """Main entry point."""
@@ -174,32 +189,43 @@ def main() -> None:
     family = detect_family(sys.argv[0])
 
     # Parse wrapper args
-    afdo_dir, afdo_cc, compiler_args = parse_wrapper_args(sys.argv[1:])
+    afdo_dir, afdo_cc, verbose, compiler_args = parse_wrapper_args(sys.argv[1:])
 
     # Find real compiler
     real_compiler = find_real_compiler(family, afdo_cc)
 
-    # Decide whether to inject -fauto-profile
-    should_inject = (
-        afdo_dir is not None
-        and is_link_step(compiler_args)
-        and has_lto(compiler_args)
-        and not has_profile_flag(compiler_args)
-    )
+    link_step = is_link_step(compiler_args)
+    lto_link = link_step and has_lto(compiler_args)
+    has_user_profile = has_profile_flag(compiler_args)
+    target = output_basename(compiler_args)
 
-    # Build final argv
+    # Build final argv, injecting a profile only for an eligible LTO link.
     final_argv = [real_compiler] + compiler_args
-
-    if should_inject:
-        assert afdo_dir is not None  # guaranteed by should_inject check
-        output = output_basename(compiler_args)
-        profile_path = os.path.join(afdo_dir, output + ".gcov")
-
-        if os.path.exists(profile_path):
-            final_argv.append(f"-fauto-profile={profile_path}")
+    if afdo_dir is not None and link_step:
+        if not lto_link:
+            if verbose:
+                print(f"afdo-gcc: target {target}: link is not LTO",
+                      file=sys.stderr)
         else:
-            print(f"afdo-gcc: no profile {profile_path}, building without -fauto-profile",
-                  file=sys.stderr)
+            profile_path = os.path.join(afdo_dir, target + ".gcov")
+            profile_found = os.path.exists(profile_path)
+            if verbose:
+                status = "found" if profile_found else "not found"
+                print(f"afdo-gcc: target {target}: profile {profile_path} "
+                      f"{status}", file=sys.stderr)
+
+            if profile_found and not has_user_profile:
+                final_argv.append(f"-fauto-profile={profile_path}")
+            elif not profile_found:
+                print(
+                    f"afdo-gcc: target {target}: no profile {profile_path}, "
+                    "building without -fauto-profile",
+                    file=sys.stderr,
+                )
+
+    if verbose == 2:
+        print(f"afdo-gcc: target {target}: reprocessed command line: "
+              f"{shlex.join(final_argv)}", file=sys.stderr)
 
     # Increment recursion depth guard
     new_env = os.environ.copy()

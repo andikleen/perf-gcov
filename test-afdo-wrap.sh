@@ -116,9 +116,26 @@ else
     fail
 fi
 
-echo "=== Test 6: Default a.out ==="
-run_wrap afdo-gcc -flto --afdo-dir="$TMP/afdodir" a.o
-if grep -q -- "-fauto-profile=$TMP/afdodir/a.out.gcov" "$TMP/argv.out"; then
+echo "=== Test 6: Verbose profile found ==="
+run_wrap afdo-gcc --verbose -flto --afdo-dir="$TMP/afdodir" -o foo a.o
+if grep -q "target foo: profile .*foo.gcov found" "$TMP/stderr.txt"; then
+    pass
+else
+    fail
+fi
+
+echo "=== Test 7: Verbose non-LTO link ==="
+run_wrap afdo-gcc --verbose --afdo-dir="$TMP/afdodir" -o foo a.o
+if grep -q "target foo: link is not LTO" "$TMP/stderr.txt"; then
+    pass
+else
+    fail
+fi
+
+echo "=== Test 8: Verbose level 2 prints reprocessed command ==="
+run_wrap afdo-gcc --verbose=2 -flto --afdo-dir="$TMP/afdodir" -o foo a.o
+if grep -q "target foo: reprocessed command line:.*-fauto-profile=$TMP/afdodir/foo.gcov" "$TMP/stderr.txt" &&
+   ! grep -q -- "--verbose" "$TMP/argv.out"; then
     pass
 else
     fail
