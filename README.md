@@ -19,7 +19,7 @@ like online profiling.
 Get patched libbacktrace (temporary, until these changes are upstreamed)
 
 ```
-git clone --depth 10 -b libbacktrace-disc-9 https://github.com/andikleen/gcc gcc
+git clone --depth 10 -b libbacktrace-disc-10 https://github.com/andikleen/gcc gcc
 cd gcc/libbacktrace
 ./configure
 make

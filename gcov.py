@@ -150,13 +150,12 @@ class Stats:
 
 stats = Stats()
 
+
 class BinaryContext:
     """Per-binary profiling context."""
     def __init__(self, dsoname: str):
         self.dsoname = dsoname
         self.btstate: Any = None
-        # Load offset for shared library relocation (runtime_addr - file_addr)
-        self.load_offset: int = 0
         # outermost function name -> profile tree root
         self.tree: dict[FuncKey, FuncNode] = {}
         # Range-based profile data (LBR-derived ranges)
@@ -190,25 +189,7 @@ def is_file_dso(dsoname: str) -> bool:
     """Check if DSO is a real file (not kernel, vdso, etc.)."""
     return not dsoname.startswith('[') and '/' in dsoname
 
-@lru_cache(maxsize=None)
-def is_position_independent(dsoname: str) -> bool:
-    """Return True if the ELF file is ET_DYN (PIE or shared library).
-    Results are cached per dsoname."""
-    try:
-        with open(dsoname, "rb") as f:
-            ident = f.read(20)
-    except OSError:
-        return False
-    if len(ident) < 20 or ident[:4] != b'\x7fELF':
-        return False
-    ei_data = ident[5]
-    if ei_data == 1:  # ELFDATA2LSB
-        e_type = ident[16] | (ident[17] << 8)
-    elif ei_data == 2:  # ELFDATA2MSB
-        e_type = (ident[16] << 8) | ident[17]
-    else:
-        return False
-    return e_type == 3  # ET_DYN
+
 
 _should_process_cache: dict[str, bool] = {}
 def should_process_binary(dsoname: str) -> bool:
@@ -250,7 +231,7 @@ def should_process_binary(dsoname: str) -> bool:
     _should_process_cache[dsoname] = result
     return result
 
-def get_or_create_binary(dsoname: str, dso_map_start: int = 0, map_pgoff: int = 0) -> BinaryContext | None:
+def get_or_create_binary(dsoname: str) -> BinaryContext | None:
     """Get or create BinaryContext for a DSO."""
     if dsoname in binaries:
         return binaries[dsoname]
@@ -269,11 +250,6 @@ def get_or_create_binary(dsoname: str, dso_map_start: int = 0, map_pgoff: int = 
 
     ctx = BinaryContext(dsoname)
     ctx.btstate = btstate
-    # Only ET_DYN files (PIE/shared library) need load offset subtraction.
-    if is_position_independent(dsoname):
-        ctx.load_offset = dso_map_start - map_pgoff
-        vprint(f"  {os.path.basename(dsoname)}: load_offset=0x{ctx.load_offset:x}")
-
     binaries[dsoname] = ctx
     return ctx
 
@@ -1088,31 +1064,21 @@ def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
 
 
 def process_event(param_dict: dict[str, Any]) -> None:
-    """Process LBR branch stack to build range_counts and branch_counts.
-
-    Routes branches to the correct per-binary context. Cross-binary
-    branches are filtered out."""
-
+    """Process LBR branches from the sample's DSO."""
     brstack = param_dict["brstack"]
     brstacksym = param_dict["brstacksym"]
-
     if len(brstack) == 0:
         return
 
-    # mmap info in param_dict describes the sample's own DSO, not
-    # necessarily every DSO that appears in the branch stack. We can
-    # only trust it when the branch DSO matches the sample DSO.
+    sample = param_dict.get("sample", {})
     sample_dso = param_dict.get("dso")
     dso_map_start = param_dict.get("dso_map_start", 0)
     map_pgoff = param_dict.get("map_pgoff", 0)
-    sample_time = param_dict.get("sample", {}).get("time", 0)
-    sample_ip = param_dict.get("sample", {}).get("ip", 0)
+    sample_time = sample.get("time", 0)
+    sample_ip = sample.get("ip", 0)
+    load_offset = dso_map_start - map_pgoff if sample_dso and dso_map_start else 0
 
-    # Track the most-recently-seen branch per binary for
-    # duplicate-backedge filtering and range computation.
     last_branch: dict[str, dict] = {}
-
-    # Count each binary at most once per sample event for --min-samples.
     seen_binaries: set[str] = set()
 
     for br, bsym in zip(brstack, brstacksym):
@@ -1121,50 +1087,34 @@ def process_event(param_dict: dict[str, Any]) -> None:
             stats.crossed += 1
             stats.raw_ignored_branches += 1
             continue
-        # Cheap pre-filter: skip non-file DSOs (kernel, vdso, etc.)
         dsoname = br["from_dsoname"]
-        if dsoname.startswith('[') or '/' not in dsoname:
+        if dsoname != sample_dso or not is_file_dso(dsoname):
             stats.raw_ignored_branches += 1
             continue
 
-        # Only use the sample's mmap info for the matching DSO. For other
-        # DSOs, reuse a previously-created context (with a known load
-        # offset from when it was the sample DSO). If unseen, non-PIE
-        # DSOs can be processed with load_offset=0; PIE/shared DSOs
-        # without mmap info must be skipped to avoid corrupt addresses.
-        if dsoname == sample_dso:
-            ctx = get_or_create_binary(dsoname, dso_map_start, map_pgoff)
-        else:
-            ctx = binaries.get(dsoname)
-            if ctx is None:
-                if is_position_independent(dsoname):
-                    stats.raw_ignored_branches += 1
-                    continue
-                ctx = get_or_create_binary(dsoname, 0, 0)
+        ctx = get_or_create_binary(dsoname)
         if ctx is None:
             stats.raw_ignored_branches += 1
             continue
+        from_addr = br["from"] - load_offset
+        to_addr = br["to"] - load_offset
 
         if dsoname not in seen_binaries:
             ctx.sample_count += 1
             seen_binaries.add(dsoname)
         ctx.branch_count += 1
 
-        # Duplicate-backedge filter: skip if this branch matches the
-        # most-recently-seen branch from the same binary
         prev = last_branch.get(dsoname)
-        if (args.strip_dup_backedge_stride_limit and
-            prev is not None and
-            prev["from"] == br["from"] and
-            prev["to"] == br["to"] and
-            abs(br["from"] - br["to"]) > args.strip_dup_backedge_stride_limit):
+        if (args.strip_dup_backedge_stride_limit and prev is not None
+                and prev["from"] == br["from"] and prev["to"] == br["to"]
+                and abs(br["from"] - br["to"])
+                > args.strip_dup_backedge_stride_limit):
             continue
-
-        last_branch[dsoname] = br
+        last_branch[dsoname] = {"from": br["from"], "to": br["to"],
+                                "from_addr": from_addr}
 
         bs_from = bsym.get("from", "")
         bs_to = bsym.get("to", "")
-        # Parse symbol[+0xOFFSET].
         from_parts = bs_from.rsplit("+", 1)
         to_parts = bs_to.rsplit("+", 1)
         from_sym = from_parts[0] if from_parts[0] else None
@@ -1180,14 +1130,11 @@ def process_event(param_dict: dict[str, Any]) -> None:
             to_off = None
             to_sym = bs_to
 
-        # Subtract load offset to get file-relative addresses
-        from_addr = br["from"] - ctx.load_offset
-        to_addr = br["to"] - ctx.load_offset
-        ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym, from_off, to_off)] += 1
+        ctx.branch_counts[((from_addr, to_addr), from_sym, to_sym,
+                           from_off, to_off)] += 1
         if sample_time and sample_ip:
-            ctx.first_address_time.setdefault(sample_ip - ctx.load_offset, sample_time)
-        # Range between this branch's target and the previous same-binary branch's source
+            ctx.first_address_time.setdefault(sample_ip - load_offset, sample_time)
         if prev is not None:
-            end = prev["from"] - ctx.load_offset
+            end = prev["from_addr"]
             if end >= to_addr and end - to_addr <= args.insn_range_max:
                 ctx.range_counts[((to_addr, end), to_sym)] += 1

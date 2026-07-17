@@ -30,10 +30,8 @@ createstate (PyObject *self, PyObject *args)
   filename = strdup (filename);
   if (!filename)
     return PyErr_NoMemory ();
-  /* Pass flags = 2 (MOREDATA) so that the callback receives a
-     backtrace_moredata pointer instead of the raw data argument,
-     providing discriminator and decl_line.  */
-  state = backtrace_create_state (filename, 2, error_callback, NULL);
+  /* Pass MOREDATA | OFFLINE so PCs supplied to libbacktrace are file-relative. */
+  state = backtrace_create_state (filename, 6, error_callback, NULL);
   if (!state)
     {
       free ((void *)filename);
@@ -53,14 +51,14 @@ add_inlines (void *data, uintptr_t pc, const char *filename,
 	    int lineno, const char *function)
 {
   struct backtrace_moredata *md = (struct backtrace_moredata *) data;
-  PyObject *list = (PyObject *) md->data;
+  PyObject *list = (PyObject *) md->backtrace_data;
   PyList_Append (list, Py_BuildValue ("Ksisii",
-				      (unsigned long long) pc,
-				      filename ? strdup (filename) : NULL,
-				      lineno,
-				      function ? strdup (function) : NULL,
-				      md->discriminator,
-				      md->decl_line));
+                                      (unsigned long long) pc,
+                                      filename ? strdup (filename) : NULL,
+                                      lineno,
+                                      function ? strdup (function) : NULL,
+                                      md->backtrace_discriminator,
+                                      md->backtrace_decl_line));
   return 0;
 }
 
