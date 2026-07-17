@@ -32,7 +32,7 @@ the right python setup from the perf binary. You can override
 the perf binary used at build time with PERF=...
 
 ```
-DEVEL=$(ldd $(which perf) | grep -o python.... | head -1)-config
+DEVEL=$(ldd $(which perf) | grep -o python.... | head -1)-devel (or -dev)
 apt/dnf/zypper install $DEVEL
 ```
 
