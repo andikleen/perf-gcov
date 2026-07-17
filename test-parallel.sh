@@ -23,6 +23,7 @@ fi
 
 set -x
 set -e
+set -o pipefail
 
 
 failed() {

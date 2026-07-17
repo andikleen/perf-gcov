@@ -7,6 +7,7 @@ PERF=${PERF:-perf}
 
 set -x
 set -e
+set -o pipefail
 
 failed() {
 	echo "FAILED"

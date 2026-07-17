@@ -18,6 +18,7 @@ fi
 
 set -x
 set -e
+set -o pipefail
 
 failed() {
 	echo "FAILED"
@@ -95,12 +96,17 @@ cleanup_files="${cleanup_files} ${i}.two.2 ${i}.two.3"
 
 # 4. Mixed version input should be rejected
 echo "=== MIXED v2+v3 REJECTED ==="
-if ${MERGER} -o ${i}.mix --gcov-version 3 ${i}.1.2 ${i}.1.3 2>&1 | grep -q "cannot merge mixed"; then
-	echo "MIXED REJECT: OK"
+if ${MERGER} -o ${i}.mix --gcov-version 3 ${i}.1.2 ${i}.1.3 >${i}.mix.log 2>&1; then
+  echo "MIXED REJECT: FAIL - merger accepted mixed versions"
+  exit 1
+elif grep -q "cannot merge mixed" ${i}.mix.log; then
+  echo "MIXED REJECT: OK"
 else
-	echo "MIXED REJECT: FAIL - expected error on mixed versions"
-	exit 1
+  echo "MIXED REJECT: FAIL - expected error on mixed versions"
+  cat ${i}.mix.log
+  exit 1
 fi
+cleanup_files="${cleanup_files} ${i}.mix.log"
 
 # 5. Threshold filtering
 echo "=== THRESHOLD ==="
@@ -172,7 +178,16 @@ fi
 echo "=== BAD FILE ==="
 echo "garbage" > ${i}.bad
 cleanup_files="${cleanup_files} ${i}.bad"
-${MERGER} ${i}.bad 2>&1 | grep -q "bad magic"
+${MERGER} ${i}.bad >${i}.bad.log 2>&1 && {
+  echo "BAD FILE: FAIL - merger accepted invalid input"
+  exit 1
+}
+grep -q "bad magic" ${i}.bad.log || {
+  echo "BAD FILE: FAIL - unexpected error"
+  cat ${i}.bad.log
+  exit 1
+}
+cleanup_files="${cleanup_files} ${i}.bad.log"
 echo "BAD FILE: OK"
 echo "=== EMPTY OUTPUT v3 ==="
 MERGE_OUT_EMPTY3="${i}.empty.3"

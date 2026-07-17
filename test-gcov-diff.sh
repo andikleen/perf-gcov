@@ -3,6 +3,7 @@
 
 set -x
 set -e
+set -o pipefail
 
 DIFF=./gcov-diff.py
 CC=${CC:-gcc}
