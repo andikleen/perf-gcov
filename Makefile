@@ -54,7 +54,7 @@ typecheck:
 lint:
 	flake8 ${PSRC}
 
-test:
+test: all
 	./tester
 	./test-gcov-online.sh
 	./test-multi-binary.sh
