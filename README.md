@@ -16,14 +16,13 @@ like online profiling.
 
 ## Setup
 
-Get patched libbacktrace (temporary, until these changes are upstreamed)
+Build libbacktrace from the GCC (if installed gcc version < 17)
 
 ```
-git clone --depth 10 -b libbacktrace-disc-9 https://github.com/andikleen/gcc gcc
-cd gcc/libbacktrace
+cd ../gcc/libbacktrace
 ./configure
 make
-cp backtrace.h .libs/libbacktrace.a ../../perf-gcov
+cd ../../perf-gcov
 ```
 
 Make sure you have the python-devel package for the python

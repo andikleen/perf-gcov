@@ -18,5 +18,5 @@ for i in range(args.repeat):
         print(f"No backtrace info for {args.elffile} IP {args.ip}", file=sys.stderr)
         continue
     for j in frames:
-        print("%x %s:%d %s %d" % j)
+        print("%x %s:%d %s %d %d" % j)
 

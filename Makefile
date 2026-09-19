@@ -3,21 +3,22 @@
 PERF = perf
 # use the python version that perf is built with
 CONFIG := $(shell ldd `which ${PERF}` |grep -o 'libpython....'|sed -e s/lib// -e 1q)-config
-# can be gccbuilddir/libbacktrace
-# otherwise copy libbacktrace.a here first
-BACKTRACESRC := .
-# if pointing to gcc builddir use .libs/libbacktrace.a
-BACKTRACELIB := libbacktrace.a
+# Build against the GCC checkout's libbacktrace.
+BACKTRACESRC ?= ../gcc/libbacktrace
+BACKTRACELIB ?= ${BACKTRACESRC}/.libs/libbacktrace.a
 
 target = backtrace$(shell $(CONFIG) --extension-suffix)
 
 all: ${target}
 
-${target}: backtracemodule.o 
-	gcc -shared -L. -o ${target} backtracemodule.o ${BACKTRACELIB} libbacktrace.a $(shell ${CONFIG} --ldflags)
+${target}: backtracemodule.o backtrace-interposer.o ${BACKTRACELIB}
+	gcc -shared -Wl,--wrap=dl_iterate_phdr -o ${target} backtracemodule.o backtrace-interposer.o ${BACKTRACELIB} $(shell ${CONFIG} --ldflags)
 
-backtracemodule.o: backtracemodule.c
+backtracemodule.o: backtracemodule.c ${BACKTRACESRC}/backtrace.h
 	gcc -Wall -I.  -fPIC $(shell ${CONFIG} --includes --cflags) -I ${BACKTRACESRC} -c backtracemodule.c
+
+backtrace-interposer.o: backtrace-interposer.c
+	gcc -Wall -fPIC -c backtrace-interposer.c
 
 TESTS = tgoto tswitch tdisc tinlines tinlines2 tcall test-lto tnonunique1 tnonunique2 tindirect
 
@@ -25,7 +26,7 @@ MULTI_TESTS = tlibmain tlibmain-only tmulti1 tmulti2 tmulti3
 DIRS = multibin_out
 
 clean:
-	rm -f backtracemodule.o ${target} \
+	rm -f backtracemodule.o backtrace-interposer.o ${target} \
 		$(addsuffix .data,$(TESTS) $(MULTI_TESTS)) multibin.data \
 		$(addsuffix .data.old,$(TESTS)) \
 		$(addsuffix .gcov,$(TESTS) $(MULTI_TESTS) libtlib.so ld-linux-x86-64.so.2 libc.so.6) \
