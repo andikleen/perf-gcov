@@ -55,7 +55,7 @@ def main() -> None:
     assert [gcov.frame_offset(frame, ctx) >> 16 for frame in frames] == [10, 3, 4]
     print("INLINE DECLARATION METADATA: OK")
 
-    gcov.args = types.SimpleNamespace(binary=[], binary_exact=[])
+    setattr(gcov, "args", types.SimpleNamespace(binary=[], binary_exact=[]))
     gcov.args.binary_exact = ["/build/prev-gcc/cc1plus"]
     gcov._should_process_cache.clear()
     assert gcov.should_process_binary("/build/prev-gcc/cc1plus")
