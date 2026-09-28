@@ -48,7 +48,7 @@ clean:
 	rm -rf $(DIRS)
 
 PSRC := gcov.py gcov-dump.py format.py profile-merger.py suffix.py \
-	test-suffix.py afdo-gcc.py strip-types.py gcov-diff.py
+	test-suffix.py test-inline-metadata.py afdo-gcc.py strip-types.py gcov-diff.py
 typecheck:
 	PYRIGHT_PYTHON_FORCE_VERSION=latest pyright ${PSRC}
 
@@ -63,6 +63,7 @@ test: all
 	./test-afdo-wrap.sh
 	./test-parallel.sh
 	./test-gcov-diff.sh
+	./test-inline-metadata.py
 
 prefix := ${HOME}
 

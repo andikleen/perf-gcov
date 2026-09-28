@@ -52,6 +52,9 @@ ap.add_argument('output', default="file.gcov", nargs='?', help="Output gcov file
 ap.add_argument('--binary', '-binary', action='append', default=[],
                 help="Binary to profile (fnmatch pattern, repeatable). "
                      "If omitted, auto-discover all binaries.")
+ap.add_argument('--binary-exact', action='append', default=[],
+                help="Profile only this exact perf DSO path (repeatable). "
+                     "Unlike --binary, does not match by basename.")
 ap.add_argument('--profile', '-i', '-profile',
                 help="Profile data. Default perf.data")
 ap.add_argument('--gcov', '-gcov', help="gcov output file")
@@ -102,7 +105,18 @@ if os.getenv('PERF_EXEC_PATH') is None:
                 data = sys.argv[i]
                 del sys.argv[i]
                 break
-    pargs = [perf, "script", "-i", data, sys.argv[0]] + sys.argv[1:]
+    exact_dso = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("--binary-exact="):
+            exact_dso = arg.split("=", 1)[1]
+            break
+        if arg.startswith("-binary-exact="):
+            exact_dso = arg.split("=", 1)[1]
+            break
+    pargs = [perf, "script", "-i", data]
+    if exact_dso is not None:
+        pargs.append("--dsos=" + os.path.realpath(exact_dso))
+    pargs += [sys.argv[0]] + sys.argv[1:]
     sys.exit(subprocess.run(pargs).returncode)
 
 if backtrace is None:
@@ -212,23 +226,20 @@ def is_position_independent(dsoname: str) -> bool:
 
 _should_process_cache: dict[str, bool] = {}
 def should_process_binary(dsoname: str) -> bool:
-    """Check if binary matches --binary patterns. Results cached per dsoname.
+    """Check if binary matches the requested filters.
 
-    Matches the DSO against user-provided patterns using three strategies
-    (any match suffices):
-      1. fnmatch full DSO path against the raw pattern
-      2. fnmatch DSO basename against the raw pattern
-      3. fnmatch DSO basename against the pattern's basename
-
-    Strategy 3 handles the case where the binary was built in a different
-    directory than where it was deployed/profiled.
-
+    ``--binary`` uses basename fallbacks for deployed binaries.  Use
+    ``--binary-exact`` when perf data contains multiple DSOs with the same
+    basename and only one may be selected.
     """
     try:
         return _should_process_cache[dsoname]
     except KeyError:
         pass
-    if not args.binary:
+    if args.binary_exact:
+        exact_paths = {os.path.realpath(path) for path in args.binary_exact}
+        result = os.path.realpath(dsoname) in exact_paths
+    elif not args.binary:
         result = True
     else:
         dso_basename = os.path.basename(dsoname)
@@ -242,7 +253,7 @@ def should_process_binary(dsoname: str) -> bool:
             if fnmatch.fnmatch(dso_basename, pat):
                 result = True
                 break
-            # Strategy 3: DSO basename against pattern's basename
+            # Strategy 3: DSO basename against the pattern's basename
             pat_basename = os.path.basename(pat)
             if pat_basename and fnmatch.fnmatch(dso_basename, pat_basename):
                 result = True
@@ -820,7 +831,8 @@ def add_dwarf_zero_scaffolding(ctx: BinaryContext) -> None:
         # execution counts, not exact scaffolding placement. A proper implementation
         # would require parsing DWARF line table end_sequence markers or querying
         # DW_AT_high_pc from function DIEs.
-        epilogue_line = max_line + 3
+        # GCOV encodes the source line in a 16-bit field.
+        epilogue_line = min(max_line + 3, 0xFFFF)
         epilogue_offset = epilogue_line << 16
 
         # Check if this line already has data (any discriminator)
@@ -1047,12 +1059,18 @@ def getframes(ctx: BinaryContext, ip: int) -> list[Frame] | None:
         return None
     op = p[0]
     # pcinfo entry layout: (PC, filename, lineno, function, disc, decl_line)
-    # entries sharing op's PC form the inline stack, innermost first.
+    # Entries sharing op's PC form the inline stack, innermost first.
     frames = [Frame(x[1], x[2], x[4], x[3], x[5])
               for x in itertools.takewhile(lambda x: x[0] == op[0], p)]
     if frames[0].file is None:
         return None
     frames.reverse()
+    if len(frames) > 1:
+        # GCC libbacktrace reports declaration lines one frame late while
+        # walking an inline chain.  Rotate them back to their owning frame.
+        decllines = [fr.declline for fr in frames]
+        frames = [fr._replace(declline=decllines[(i - 1) % len(decllines)])
+                  for i, fr in enumerate(frames)]
     return frames
 
 def frame_offset(fr: Frame, ctx: BinaryContext) -> int:
